@@ -10,7 +10,7 @@ import {
 } from "@chakra-ui/react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -18,6 +18,8 @@ import { AppButton } from "@/components/ui/AppButton";
 import { AppInput } from "@/components/ui/AppInput";
 import { AppPasswordInput } from "@/components/ui/AppPasswordInput";
 import { AppSelect } from "@/components/ui/AppSelect";
+import { AppMultiSelect } from "@/components/ui/select";
+import type { AppSelectOption } from "@/components/ui/select";
 import { useModalCloseGuard } from "@/hooks/useModalCloseGuard";
 import { UserRole } from "@/types/role";
 import type { Staff } from "@/types/staff";
@@ -27,13 +29,15 @@ const createSchema = z.object({
   fullName: z.string().min(2, "Full name must be at least 2 characters"),
   email: z.string().email("Please enter a valid email").optional().or(z.literal("")),
   role: z.nativeEnum(UserRole).refine((role) => role !== UserRole.ADMIN, "Admin role is not allowed"),
-  password: z.string().min(8, "Password must be at least 8 characters")
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  assignedReports: z.array(z.string()).default([])
 });
 
 const updateSchema = z.object({
   fullName: z.string().min(2, "Full name must be at least 2 characters"),
   email: z.string().email("Please enter a valid email").optional().or(z.literal("")),
-  role: z.nativeEnum(UserRole).refine((role) => role !== UserRole.ADMIN, "Admin role is not allowed")
+  role: z.nativeEnum(UserRole).refine((role) => role !== UserRole.ADMIN, "Admin role is not allowed"),
+  assignedReports: z.array(z.string()).default([])
 });
 
 type StaffFormValues = {
@@ -42,6 +46,7 @@ type StaffFormValues = {
   email: string;
   role: UserRole;
   password: string;
+  assignedReports: string[];
 };
 
 type StaffFormModalProps = {
@@ -55,8 +60,10 @@ type StaffFormModalProps = {
     email?: string;
     role: UserRole;
     password?: string;
+    assignedReports?: string[];
   }) => Promise<void>;
   loading?: boolean;
+  reportOptions: AppSelectOption[];
 };
 
 const roleOptions = [
@@ -72,7 +79,8 @@ export const StaffFormModal = ({
   mode,
   initialData,
   onSubmit,
-  loading
+  loading,
+  reportOptions
 }: StaffFormModalProps) => {
   const isCreate = mode === "create";
   const schema = isCreate ? createSchema : updateSchema;
@@ -82,6 +90,7 @@ export const StaffFormModal = ({
     register,
     reset,
     handleSubmit,
+    control,
     formState: { errors }
   } = useForm<StaffFormValues>({
     resolver: zodResolver(schema as z.ZodTypeAny),
@@ -90,7 +99,8 @@ export const StaffFormModal = ({
       fullName: "",
       email: "",
       role: UserRole.STAFF,
-      password: ""
+      password: "",
+      assignedReports: []
     }
   });
 
@@ -105,7 +115,8 @@ export const StaffFormModal = ({
         fullName: initialData.fullName,
         email: initialData.email ?? "",
         role: initialData.role,
-        password: ""
+        password: "",
+        assignedReports: initialData.assignedReports ?? []
       });
       return;
     }
@@ -115,7 +126,8 @@ export const StaffFormModal = ({
       fullName: "",
       email: "",
       role: UserRole.STAFF,
-      password: ""
+      password: "",
+      assignedReports: []
     });
   }, [initialData, isOpen, reset]);
 
@@ -174,6 +186,20 @@ export const StaffFormModal = ({
               options={roleOptions}
               error={errors.role?.message as string | undefined}
               {...register("role")}
+            />
+            <Controller
+              control={control}
+              name="assignedReports"
+              render={({ field }) => (
+                <AppMultiSelect
+                  label="Reports Access"
+                  values={field.value ?? []}
+                  options={reportOptions}
+                  onValueChange={field.onChange}
+                  placeholder="Select reports staff can access"
+                  helperText="Only selected reports will be visible in staff desktop reports page."
+                />
+              )}
             />
           </VStack>
         </ModalBody>

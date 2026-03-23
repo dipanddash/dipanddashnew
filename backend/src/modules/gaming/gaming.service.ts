@@ -47,6 +47,7 @@ type CreateBookingInput = {
   bookingNumber?: string;
   bookingType: GamingBookingType;
   resourceCode: string;
+  resourceCodes?: string[];
   checkInAt?: string;
   hourlyRate: number;
   customers: BookingCustomerMember[];
@@ -68,6 +69,7 @@ type CreateBookingInput = {
 type UpdateBookingInput = {
   bookingType?: GamingBookingType;
   resourceCode?: string;
+  resourceCodes?: string[];
   checkInAt?: string;
   hourlyRate?: number;
   customers?: BookingCustomerMember[];
@@ -154,6 +156,34 @@ export class GamingService {
     return normalized;
   }
 
+  private normalizeResourceCodes(
+    bookingType: GamingBookingType,
+    input: { resourceCode?: string; resourceCodes?: string[] }
+  ) {
+    const fromArray = (input.resourceCodes ?? [])
+      .map((code) => this.validateResource(bookingType, code))
+      .filter(Boolean);
+    const uniqueArray = [...new Set(fromArray)];
+    if (uniqueArray.length) {
+      return uniqueArray;
+    }
+    if (input.resourceCode) {
+      return [this.validateResource(bookingType, input.resourceCode)];
+    }
+    throw new AppError(422, "Select at least one board/console.");
+  }
+
+  private buildResourceLabel(resourceCodes: string[]) {
+    if (!resourceCodes.length) {
+      return "-";
+    }
+    if (resourceCodes.length === 1) {
+      return GAMING_RESOURCE_LABELS[resourceCodes[0]] ?? resourceCodes[0];
+    }
+    const first = GAMING_RESOURCE_LABELS[resourceCodes[0]] ?? resourceCodes[0];
+    return `${first} +${resourceCodes.length - 1}`;
+  }
+
   private sanitizeCustomerGroup(customers: BookingCustomerMember[]) {
     const sanitized = customers
       .map((member) => ({
@@ -207,12 +237,15 @@ export class GamingService {
     });
 
     const finalAmount = booking.status === "completed" ? (finalAmountStored > 0 ? finalAmountStored : computed.amount) : computed.amount;
+    const resourceCodes = booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode];
     return {
       id: booking.id,
       bookingNumber: booking.bookingNumber,
       bookingType: booking.bookingType,
       resourceCode: booking.resourceCode,
       resourceLabel: booking.resourceLabel,
+      resourceCodes,
+      resourceLabels: resourceCodes.map((code) => GAMING_RESOURCE_LABELS[code] ?? code),
       customers: booking.customerGroup ?? [],
       customerCount: (booking.customerGroup ?? []).length,
       primaryCustomerName: booking.primaryCustomerName,
@@ -252,19 +285,25 @@ export class GamingService {
     return `GM-${y}${m}${d}-${hh}${mm}-${random}`;
   }
 
-  private async assertResourceAvailable(resourceCode: string, excludeBookingId?: string) {
+  private async assertResourcesAvailable(resourceCodes: string[], excludeBookingId?: string) {
     const query = this.bookingRepository
       .createQueryBuilder("booking")
-      .where("booking.resourceCode = :resourceCode", { resourceCode })
-      .andWhere("booking.status IN (:...statuses)", { statuses: ["upcoming", "ongoing"] });
+      .where("booking.status IN (:...statuses)", { statuses: ["upcoming", "ongoing"] });
 
     if (excludeBookingId) {
       query.andWhere("booking.id != :excludeBookingId", { excludeBookingId });
     }
 
-    const existing = await query.getOne();
+    const existingRows = await query.getMany();
+    const existing = existingRows.find((booking) => {
+      const bookingCodes = booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode];
+      return bookingCodes.some((code) => resourceCodes.includes(code));
+    });
+
     if (existing) {
-      throw new AppError(409, `${GAMING_RESOURCE_LABELS[resourceCode] ?? resourceCode} is currently occupied. Choose another slot.`);
+      const bookingCodes = existing.resourceCodes?.length ? existing.resourceCodes : [existing.resourceCode];
+      const blocked = bookingCodes.find((code) => resourceCodes.includes(code)) ?? bookingCodes[0];
+      throw new AppError(409, `${GAMING_RESOURCE_LABELS[blocked] ?? blocked} is currently occupied. Choose another slot.`);
     }
   }
 
@@ -273,9 +312,13 @@ export class GamingService {
     if (!GAMING_BOOKING_TYPES.includes(bookingType)) {
       throw new AppError(422, "Booking type is invalid.");
     }
-    const resourceCode = this.validateResource(bookingType, input.resourceCode);
+    const resourceCodes = this.normalizeResourceCodes(bookingType, {
+      resourceCode: input.resourceCode,
+      resourceCodes: input.resourceCodes
+    });
+    const resourceCode = resourceCodes[0];
     const customerGroup = this.sanitizeCustomerGroup(input.customers);
-    await this.assertResourceAvailable(resourceCode);
+    await this.assertResourcesAvailable(resourceCodes);
 
     const checkInAt = parseDateOrThrow(input.checkInAt, "Check-in time") ?? new Date();
     const status =
@@ -308,7 +351,8 @@ export class GamingService {
       bookingNumber: cleanText(input.bookingNumber) ?? this.buildBookingNumber(),
       bookingType,
       resourceCode,
-      resourceLabel: GAMING_RESOURCE_LABELS[resourceCode] ?? resourceCode,
+      resourceCodes,
+      resourceLabel: this.buildResourceLabel(resourceCodes),
       customerGroup,
       primaryCustomerName: customerGroup[0]?.name ?? null,
       primaryCustomerPhone: customerGroup[0]?.phone ?? null,
@@ -357,17 +401,48 @@ export class GamingService {
       throw new AppError(409, "Completed bookings cannot be edited.");
     }
 
-    const nextBookingType = input.bookingType ?? booking.bookingType;
-    const nextResourceCode = input.resourceCode
-      ? this.validateResource(nextBookingType, input.resourceCode)
-      : booking.resourceCode;
+    const isStaffRole = !isPrivileged(context.role);
+    if (isStaffRole) {
+      const restrictedLabels: string[] = [];
+      if (input.bookingType !== undefined) restrictedLabels.push("booking type");
+      if (input.resourceCode !== undefined) restrictedLabels.push("board/console");
+      if (input.checkInAt !== undefined) restrictedLabels.push("check-in time");
+      if (input.hourlyRate !== undefined) restrictedLabels.push("hourly rate");
+      if (input.status !== undefined) restrictedLabels.push("status");
+      if (input.bookingChannel !== undefined) restrictedLabels.push("booking channel");
+      if (input.note !== undefined) restrictedLabels.push("note");
 
-    if (nextResourceCode !== booking.resourceCode || nextBookingType !== booking.bookingType) {
-      await this.assertResourceAvailable(nextResourceCode, booking.id);
+      if (restrictedLabels.length > 0) {
+        throw new AppError(
+          403,
+          `After check-in, you can update only customers/payment/F&B order details. Restricted fields: ${restrictedLabels.join(", ")}.`
+        );
+      }
     }
 
-    const nextCheckInAt = parseDateOrThrow(input.checkInAt, "Check-in time") ?? booking.checkInAt;
-    const nextStatus = input.status ?? booking.status;
+    const nextBookingType = isStaffRole ? booking.bookingType : input.bookingType ?? booking.bookingType;
+    const nextResourceCodes = isStaffRole
+      ? booking.resourceCodes?.length
+        ? booking.resourceCodes
+        : [booking.resourceCode]
+      : this.normalizeResourceCodes(nextBookingType, {
+          resourceCode: input.resourceCode ?? booking.resourceCode,
+          resourceCodes: input.resourceCodes ?? booking.resourceCodes
+        });
+    const nextResourceCode = nextResourceCodes[0];
+
+    if (
+      JSON.stringify(nextResourceCodes) !==
+        JSON.stringify(booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode]) ||
+      nextBookingType !== booking.bookingType
+    ) {
+      await this.assertResourcesAvailable(nextResourceCodes, booking.id);
+    }
+
+    const nextCheckInAt = isStaffRole
+      ? booking.checkInAt
+      : parseDateOrThrow(input.checkInAt, "Check-in time") ?? booking.checkInAt;
+    const nextStatus = isStaffRole ? booking.status : input.status ?? booking.status;
 
     const payment = this.sanitizePayment(
       {
@@ -379,12 +454,17 @@ export class GamingService {
 
     booking.bookingType = nextBookingType;
     booking.resourceCode = nextResourceCode;
-    booking.resourceLabel = GAMING_RESOURCE_LABELS[nextResourceCode] ?? nextResourceCode;
+    booking.resourceCodes = nextResourceCodes;
+    booking.resourceLabel = this.buildResourceLabel(nextResourceCodes);
     booking.checkInAt = nextCheckInAt;
     booking.status = nextStatus;
-    booking.hourlyRate = roundCurrency(Math.max(0, toNumber(input.hourlyRate, toNumber(booking.hourlyRate))));
-    booking.bookingChannel = cleanText(input.bookingChannel) ?? booking.bookingChannel;
-    booking.note = cleanText(input.note);
+    booking.hourlyRate = isStaffRole
+      ? booking.hourlyRate
+      : roundCurrency(Math.max(0, toNumber(input.hourlyRate, toNumber(booking.hourlyRate))));
+    booking.bookingChannel = isStaffRole
+      ? booking.bookingChannel
+      : cleanText(input.bookingChannel) ?? booking.bookingChannel;
+    booking.note = isStaffRole ? booking.note : cleanText(input.note);
     booking.paymentStatus = payment.paymentStatus;
     booking.paymentMode = payment.paymentMode;
     booking.foodOrderReference =
@@ -525,7 +605,14 @@ export class GamingService {
       query.andWhere("booking.paymentStatus = :paymentStatus", { paymentStatus: filters.paymentStatus });
     }
     if (filters.resourceCode?.trim()) {
-      query.andWhere("booking.resourceCode = :resourceCode", { resourceCode: filters.resourceCode.trim().toLowerCase() });
+      const normalizedCode = filters.resourceCode.trim().toLowerCase();
+      query.andWhere(
+        "(booking.resourceCode = :resourceCode OR booking.resourceCodes @> :resourceCodes::jsonb)",
+        {
+          resourceCode: normalizedCode,
+          resourceCodes: JSON.stringify([normalizedCode])
+        }
+      );
     }
     if (filters.search?.trim()) {
       const search = `%${filters.search.trim()}%`;
@@ -628,18 +715,21 @@ export class GamingService {
       staffRow.bookings += 1;
       staffCollectionMap.set(staffKey, staffRow);
 
-      const resourceKey = dto.resourceCode;
-      const resourceRow = resourceUsageMap.get(resourceKey) ?? {
-        resourceCode: dto.resourceCode,
-        resourceLabel: dto.resourceLabel,
-        bookings: 0,
-        revenue: 0
-      };
-      resourceRow.bookings += 1;
-      if (dto.paymentStatus === "paid") {
-        resourceRow.revenue = roundCurrency(resourceRow.revenue + dto.finalAmount);
-      }
-      resourceUsageMap.set(resourceKey, resourceRow);
+      const usageCodes = dto.resourceCodes?.length ? dto.resourceCodes : [dto.resourceCode];
+      usageCodes.forEach((resourceCode) => {
+        const resourceKey = resourceCode;
+        const resourceRow = resourceUsageMap.get(resourceKey) ?? {
+          resourceCode,
+          resourceLabel: GAMING_RESOURCE_LABELS[resourceCode] ?? resourceCode,
+          bookings: 0,
+          revenue: 0
+        };
+        resourceRow.bookings += 1;
+        if (dto.paymentStatus === "paid") {
+          resourceRow.revenue = roundCurrency(resourceRow.revenue + dto.finalAmount);
+        }
+        resourceUsageMap.set(resourceKey, resourceRow);
+      });
     });
 
     return {
@@ -666,7 +756,16 @@ export class GamingService {
     }
 
     const activeBookings = await query.getMany();
-    const activeMap = new Map(activeBookings.map((booking) => [booking.resourceCode, this.toDto(booking)]));
+    const activeMap = new Map<string, ReturnType<GamingService["toDto"]>>();
+    activeBookings.forEach((booking) => {
+      const bookingDto = this.toDto(booking);
+      const bookingCodes = booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode];
+      bookingCodes.forEach((code) => {
+        if (!activeMap.has(code)) {
+          activeMap.set(code, bookingDto);
+        }
+      });
+    });
 
     return resources.map((resource) => ({
       ...resource,
@@ -690,7 +789,11 @@ export class GamingService {
     }
 
     const bookingType = input.bookingType;
-    const resourceCode = this.validateResource(bookingType, input.resourceCode);
+    const resourceCodes = this.normalizeResourceCodes(bookingType, {
+      resourceCode: input.resourceCode,
+      resourceCodes: input.resourceCodes
+    });
+    const resourceCode = resourceCodes[0];
     const customerGroup = this.sanitizeCustomerGroup(input.customers);
     const checkInAt = parseDateOrThrow(input.checkInAt, "Check-in time") ?? existing.checkInAt;
     const checkOutAt = parseDateOrThrow(input.checkOutAt, "Check-out time");
@@ -707,15 +810,18 @@ export class GamingService {
     );
 
     if (
-      (resourceCode !== existing.resourceCode || bookingType !== existing.bookingType) &&
+      (JSON.stringify(resourceCodes) !==
+        JSON.stringify(existing.resourceCodes?.length ? existing.resourceCodes : [existing.resourceCode]) ||
+        bookingType !== existing.bookingType) &&
       (status === "upcoming" || status === "ongoing")
     ) {
-      await this.assertResourceAvailable(resourceCode, existing.id);
+      await this.assertResourcesAvailable(resourceCodes, existing.id);
     }
 
     existing.bookingType = bookingType;
     existing.resourceCode = resourceCode;
-    existing.resourceLabel = GAMING_RESOURCE_LABELS[resourceCode] ?? resourceCode;
+    existing.resourceCodes = resourceCodes;
+    existing.resourceLabel = this.buildResourceLabel(resourceCodes);
     existing.customerGroup = customerGroup;
     existing.primaryCustomerName = customerGroup[0]?.name ?? null;
     existing.primaryCustomerPhone = customerGroup[0]?.phone ?? null;

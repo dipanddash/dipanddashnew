@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { UserRole } from "../../constants/roles";
+import { REPORT_KEYS } from "../reports/reports.constants";
 
 const restrictedRoleSchema = z
   .nativeEnum(UserRole)
@@ -28,7 +29,8 @@ export const createStaffSchema = z.object({
       .email("Please provide a valid email address")
       .optional()
       .or(z.literal("")),
-    role: restrictedRoleSchema
+    role: restrictedRoleSchema,
+    assignedReports: z.array(z.enum(REPORT_KEYS)).optional().default([])
   })
 });
 
@@ -50,7 +52,8 @@ export const updateStaffSchema = z.object({
         .email("Please provide a valid email address")
         .optional()
         .or(z.literal("")),
-      role: restrictedRoleSchema.optional()
+      role: restrictedRoleSchema.optional(),
+      assignedReports: z.array(z.enum(REPORT_KEYS)).optional()
     })
     .refine((value) => Object.keys(value).length > 0, "At least one field must be provided")
 });
@@ -61,6 +64,18 @@ export const updateStaffStatusSchema = z.object({
   }),
   body: z.object({
     isActive: z.boolean()
+  })
+});
+
+export const resetStaffPasswordSchema = z.object({
+  params: z.object({
+    id: z.string().uuid("Invalid staff id")
+  }),
+  body: z.object({
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Password must contain letters and numbers")
   })
 });
 

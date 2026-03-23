@@ -123,6 +123,7 @@ const gamingBookingUpsertSchema = z.object({
     bookingNumber: z.string().trim().min(2).max(64),
     bookingType: z.enum(["snooker", "console"]),
     resourceCode: z.string().trim().toLowerCase().min(2).max(40),
+    resourceCodes: z.array(z.string().trim().toLowerCase().min(2).max(40)).min(1).optional(),
     checkInAt: z.string().datetime().optional(),
     checkOutAt: z.string().datetime().optional(),
     hourlyRate: z.coerce.number().min(0),

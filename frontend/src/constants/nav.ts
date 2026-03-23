@@ -2,6 +2,7 @@ import type { IconType } from "react-icons";
 import {
   FiBarChart2,
   FiClipboard,
+  FiDollarSign,
   FiFileText,
   FiGift,
   FiGrid,
@@ -43,6 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Reports", path: "/reports", icon: FiPieChart, roles: [UserRole.ADMIN] },
   { label: "Assets Entry", path: "/assets-entry", icon: FiShield, roles: [UserRole.ADMIN] },
   { label: "Stock Audit", path: "/stock-audit", icon: FiClipboard, roles: [UserRole.ADMIN] },
+  { label: "Cash Audit", path: "/cash-audit", icon: FiDollarSign, roles: [UserRole.ADMIN] },
   { label: "Gaming", path: "/gaming", icon: RiGamepadLine, roles: [UserRole.ADMIN] },
   {
     label: "Staff Management",

@@ -28,5 +28,9 @@ export class StaffController {
     const staff = await this.staffService.updateStatus(req.params.id, req.body.isActive);
     return sendSuccess(res, StatusCodes.OK, "Staff status updated successfully", { staff });
   };
-}
 
+  resetPassword = async (req: Request, res: Response): Promise<Response> => {
+    const staff = await this.staffService.resetPassword(req.params.id, req.body.password);
+    return sendSuccess(res, StatusCodes.OK, "Staff password reset successfully", { staff });
+  };
+}

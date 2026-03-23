@@ -22,6 +22,7 @@ import {
   FiCoffee,
   FiGrid,
   FiHome,
+  FiDollarSign,
   FiLogOut,
   FiPackage,
   FiPlusSquare,
@@ -45,6 +46,8 @@ import { StaffPlaceholderPage } from "@/app/StaffPlaceholderPage";
 import { StaffTablesPage } from "@/app/StaffTablesPage";
 import { StaffGamingBookingPage } from "@/app/StaffGamingBookingPage";
 import { SnookerDashboardPage } from "@/app/SnookerDashboardPage";
+import { StaffCashAuditPage } from "@/app/StaffCashAuditPage";
+import { StaffReportsPage } from "@/app/StaffReportsPage";
 import { PosTopBar } from "@/components/layout/PosTopBar";
 import { ShortcutHelpModal } from "@/components/pos/ShortcutHelpModal";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -61,6 +64,7 @@ type StaffViewKey =
   | "order"
   | "attendance"
   | "closing"
+  | "cash-audit"
   | "reports"
   | "profile"
   | "gaming-booking";
@@ -92,6 +96,7 @@ const MAIN_MENUS: StaffMenuConfig[] = [
   { key: "order", label: "Order", icon: FiClipboard },
   { key: "attendance", label: "Attendance", icon: FiClock },
   { key: "closing", label: "Closing", icon: FiCheckCircle },
+  { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign },
   { key: "reports", label: "Reports", icon: FiBarChart2 },
   { key: "profile", label: "Profile", icon: FiUser }
 ];
@@ -99,10 +104,11 @@ const MAIN_MENUS: StaffMenuConfig[] = [
 const SNOOKER_STAFF_MENUS: StaffMenuConfig[] = [
   { key: "dashboard", label: "Dashboard", icon: FiGrid },
   { key: "attendance", label: "Attendance", icon: FiClock },
-  { key: "gaming-booking", label: "New Booking", icon: FiPlusSquare }
+  { key: "gaming-booking", label: "New Booking", icon: FiPlusSquare },
+  { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign }
 ];
 
-const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>(["dashboard", "attendance", "gaming-booking"]);
+const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>(["dashboard", "attendance", "gaming-booking", "cash-audit"]);
 
 const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
   dashboard: {
@@ -145,9 +151,13 @@ const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
     title: "Closing",
     subtitle: "Submit end-of-day stock closing and lock/unlock billing with carry-forward rules."
   },
+  "cash-audit": {
+    title: "Cash Audit",
+    subtitle: "Submit denomination cash counts with admin-password confirmation."
+  },
   reports: {
     title: "Reports",
-    subtitle: "Staff sales reports and shift metrics are planned in next phase."
+    subtitle: "View assigned report templates with date filters and export."
   },
   profile: {
     title: "Profile",
@@ -237,12 +247,15 @@ export const StaffDesktopShell = () => {
         );
       case "closing":
         return <StaffClosingPage />;
+      case "cash-audit":
+        return <StaffCashAuditPage />;
       case "reports":
+        return <StaffReportsPage />;
       default:
         return (
           <StaffPlaceholderPage
-            title={PAGE_TITLES[activeView].title}
-            subtitle={PAGE_TITLES[activeView].subtitle}
+            title="Module"
+            subtitle="This module is currently unavailable for your account."
           />
         );
     }

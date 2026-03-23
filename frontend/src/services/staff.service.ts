@@ -22,6 +22,11 @@ export const staffService = {
       isActive
     });
     return response.data;
+  },
+  resetPassword: async (id: string, password: string) => {
+    const response = await apiClient.patch<ApiSuccess<{ staff: Staff }>>(`/staff/${id}/reset-password`, {
+      password
+    });
+    return response.data;
   }
 };
-

@@ -31,10 +31,12 @@ export class User {
   @Column({ type: "boolean", default: true })
   isActive!: boolean;
 
+  @Column({ type: "text", array: true, default: () => "'{}'" })
+  assignedReports!: string[];
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 
   @UpdateDateColumn({ type: "timestamptz" })
   updatedAt!: Date;
 }
-

@@ -33,6 +33,7 @@ import { Supplier } from "../modules/procurement/supplier.entity";
 import { Product } from "../modules/procurement/product.entity";
 import { PurchaseOrder } from "../modules/procurement/purchase-order.entity";
 import { PurchaseOrderLine } from "../modules/procurement/purchase-order-line.entity";
+import { CashAudit } from "../modules/cash-audit/cash-audit.entity";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -75,7 +76,8 @@ export const AppDataSource = new DataSource({
     Supplier,
     Product,
     PurchaseOrder,
-    PurchaseOrderLine
+    PurchaseOrderLine,
+    CashAudit
   ],
   migrations: ["src/database/migrations/*.ts"]
 });

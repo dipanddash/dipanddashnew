@@ -1,7 +1,7 @@
 import { apiClient } from "@/lib/api-client";
 import type { ApiSuccess } from "@/types/api";
 import type {
-  CreatePurchaseLineInput,
+  CreatePurchaseOrderInput,
   ProcurementMetaResponse,
   ProcurementStatsResponse,
   ProcurementUnitsResponse,
@@ -125,15 +125,26 @@ export const procurementService = {
     return response.data;
   },
 
-  createPurchaseOrder: async (payload: {
-    supplierId: string;
-    purchaseDate?: string;
-    note?: string;
-    lines: CreatePurchaseLineInput[];
-  }) => {
+  createPurchaseOrder: async (payload: CreatePurchaseOrderInput) => {
     const response = await apiClient.post<ApiSuccess<{ purchaseOrder: PurchaseOrderDetail }>>(
       "/procurement/purchase-orders",
       payload
+    );
+    return response.data;
+  },
+
+  uploadPurchaseInvoiceImage: async (file: File) => {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    const response = await apiClient.post<ApiSuccess<{ imageUrl: string; fileName: string }>>(
+      "/procurement/purchase-orders/upload-invoice",
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data"
+        }
+      }
     );
     return response.data;
   },

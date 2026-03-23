@@ -48,6 +48,9 @@ export class GamingBooking {
   resourceLabel!: string;
 
   @Column({ type: "jsonb", default: () => "'[]'::jsonb" })
+  resourceCodes!: string[];
+
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" })
   customerGroup!: BookingCustomerMember[];
 
   @Column({ type: "varchar", length: 120, nullable: true })

@@ -251,7 +251,9 @@ export type GamingBooking = {
   bookingNumber: string;
   bookingType: GamingBookingType;
   resourceCode: GamingResourceCode;
+  resourceCodes: GamingResourceCode[];
   resourceLabel: string;
+  playerCount: number;
   customers: GamingCustomerMember[];
   primaryCustomerName: string;
   primaryCustomerPhone: string;
@@ -375,6 +377,8 @@ export type SyncQueueEvent =
         bookingNumber: string;
         bookingType: GamingBookingType;
         resourceCode: GamingResourceCode;
+        resourceCodes?: GamingResourceCode[];
+        playerCount?: number;
         checkInAt?: string;
         checkOutAt?: string;
         hourlyRate: number;
@@ -476,4 +480,23 @@ export type ClosingReportSummary = {
   totalVariance: number;
   note: string | null;
   submittedAt: string;
+};
+
+export const CASH_AUDIT_DENOMINATIONS = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1] as const;
+
+export type CashAuditLastInfo = {
+  hasAudit: boolean;
+  lastAuditAt: string | null;
+  lastAuditDate: string | null;
+  lastAuditedBy: string | null;
+};
+
+export type CashAuditEntry = {
+  id: string;
+  auditDate: string;
+  countedAmount: number;
+  staffCashTakenAmount: number;
+  totalPieces: number;
+  createdAt: string;
+  approvedByAdminName: string;
 };

@@ -59,6 +59,17 @@ export const useStaffManagement = () => {
     }
   }, []);
 
+  const resetPassword = useCallback(async (id: string, password: string) => {
+    setMutationLoading(true);
+    try {
+      const response = await staffService.resetPassword(id, password);
+      setStaff((prev) => prev.map((member) => (member.id === id ? response.data.staff : member)));
+      return response.message;
+    } finally {
+      setMutationLoading(false);
+    }
+  }, []);
+
   return {
     staff,
     loading,
@@ -67,7 +78,7 @@ export const useStaffManagement = () => {
     fetchStaff,
     createStaff,
     updateStaff,
-    updateStatus
+    updateStatus,
+    resetPassword
   };
 };
-

@@ -7,13 +7,7 @@ import {
   Input,
   Select,
   SimpleGrid,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
   useToast
 } from "@chakra-ui/react";
@@ -21,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { attendanceService } from "@/services/attendance.service";
 import { usePosAuth } from "@/app/PosAuthContext";
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import type { AttendanceRecord, AttendanceSummary } from "@/types/attendance";
 import { extractApiErrorMessage } from "@/utils/api-error";
 
@@ -70,6 +65,55 @@ export const StaffAttendancePage = () => {
   }, [session?.username]);
 
   const hasOpenSession = useMemo(() => records.some((record) => record.status === "punched_in"), [records]);
+
+  const attendanceColumns = useMemo<PosTableColumn<AttendanceRecord>[]>(
+    () => [
+      {
+        key: "punchInAt",
+        header: "Punch In",
+        render: (row) => dateTimeFormatter.format(new Date(row.punchInAt))
+      },
+      {
+        key: "punchOutAt",
+        header: "Punch Out",
+        render: (row) => (row.punchOutAt ? dateTimeFormatter.format(new Date(row.punchOutAt)) : "Open Session")
+      },
+      {
+        key: "activeMinutes",
+        header: "Active",
+        render: (row) => formatMinutesAsHours(row.activeMinutes)
+      },
+      {
+        key: "breakMinutes",
+        header: "Break",
+        render: (row) => formatMinutesAsHours(row.breakMinutes)
+      },
+      {
+        key: "totalMinutes",
+        header: "Total",
+        render: (row) => formatMinutesAsHours(row.totalMinutes)
+      },
+      {
+        key: "status",
+        header: "Status",
+        render: (row) => (
+          <Box
+            px={3}
+            py={1}
+            borderRadius="full"
+            display="inline-flex"
+            bg={row.status === "punched_in" ? "green.100" : "orange.100"}
+            color={row.status === "punched_in" ? "green.700" : "#8A5400"}
+            fontWeight={700}
+            fontSize="sm"
+          >
+            {row.status === "punched_in" ? "Punched In" : "Punched Out"}
+          </Box>
+        )
+      }
+    ],
+    []
+  );
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -274,59 +318,15 @@ export const StaffAttendancePage = () => {
           </Box>
         ) : null}
 
-        <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflow="hidden">
-          <Table variant="simple">
-            <Thead bg="#FFF8EE">
-              <Tr>
-                <Th>Punch In</Th>
-                <Th>Punch Out</Th>
-                <Th>Active</Th>
-                <Th>Break</Th>
-                <Th>Total</Th>
-                <Th>Status</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {loading ? (
-                <Tr>
-                  <Td colSpan={6}>
-                    <Text color="#6D584E">Loading attendance records...</Text>
-                  </Td>
-                </Tr>
-              ) : records.length ? (
-                records.map((row) => (
-                  <Tr key={row.id}>
-                    <Td>{dateTimeFormatter.format(new Date(row.punchInAt))}</Td>
-                    <Td>{row.punchOutAt ? dateTimeFormatter.format(new Date(row.punchOutAt)) : "Open Session"}</Td>
-                    <Td>{formatMinutesAsHours(row.activeMinutes)}</Td>
-                    <Td>{formatMinutesAsHours(row.breakMinutes)}</Td>
-                    <Td>{formatMinutesAsHours(row.totalMinutes)}</Td>
-                    <Td>
-                      <Box
-                        px={3}
-                        py={1}
-                        borderRadius="full"
-                        display="inline-flex"
-                        bg={row.status === "punched_in" ? "green.100" : "orange.100"}
-                        color={row.status === "punched_in" ? "green.700" : "#8A5400"}
-                        fontWeight={700}
-                        fontSize="sm"
-                      >
-                        {row.status === "punched_in" ? "Punched In" : "Punched Out"}
-                      </Box>
-                    </Td>
-                  </Tr>
-                ))
-              ) : (
-                <Tr>
-                  <Td colSpan={6}>
-                    <Text color="#6D584E">No attendance records for the selected date.</Text>
-                  </Td>
-                </Tr>
-              )}
-            </Tbody>
-          </Table>
-        </Box>
+        <PosDataTable
+          rows={records}
+          columns={attendanceColumns}
+          getRowId={(row) => row.id}
+          loading={loading}
+          loadingMessage="Loading attendance records..."
+          emptyMessage="No attendance records for the selected date."
+          maxColumns={6}
+        />
 
         <HStack justify="space-between" mt={4}>
           <Text color="#6D584E" fontSize="sm">

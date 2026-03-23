@@ -154,6 +154,7 @@ export type PurchaseOrderSummary = {
   lineCount: number;
   totalAmount: number;
   note: string | null;
+  invoiceImageUrl: string | null;
   createdByUserId: string | null;
   createdByUserName: string | null;
   createdAt: string;
@@ -186,6 +187,7 @@ export type PurchaseOrderDetail = {
   supplierName: string;
   supplierPhone: string;
   note: string | null;
+  invoiceImageUrl: string | null;
   totalAmount: number;
   createdByUserId: string | null;
   createdByUserName: string | null;
@@ -237,4 +239,12 @@ export type CreatePurchaseLineInput = {
   unitPrice: number;
   updateUnitPrice?: boolean;
   note?: string;
+};
+
+export type CreatePurchaseOrderInput = {
+  supplierId: string;
+  purchaseDate?: string;
+  note?: string;
+  invoiceImageUrl?: string;
+  lines: CreatePurchaseLineInput[];
 };

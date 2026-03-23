@@ -1,18 +1,26 @@
 import {
   HStack,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Switch,
   Text,
   useDisclosure,
   VStack,
   useBoolean
 } from "@chakra-ui/react";
-import { Edit2, UserPlus } from "lucide-react";
+import { Edit2, KeyRound, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/common/PageHeader";
 import { ActionIconButton } from "@/components/ui/ActionIconButton";
 import { AppButton } from "@/components/ui/AppButton";
 import { AppCard } from "@/components/ui/AppCard";
+import { AppPasswordInput } from "@/components/ui/AppPasswordInput";
 import { DataTable } from "@/components/ui/DataTable";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SearchInput } from "@/components/common/SearchInput";
@@ -22,10 +30,12 @@ import { ErrorFallback } from "@/components/feedback/ErrorFallback";
 import { SkeletonTable } from "@/components/feedback/SkeletonTable";
 import { StaffFormModal } from "@/features/staff/components/StaffFormModal";
 import { useStaffManagement } from "@/features/staff/hooks/useStaffManagement";
+import { reportsService } from "@/services/reports.service";
 import type { Staff } from "@/types/staff";
 import type { UserRole } from "@/types/role";
 import { useAppToast } from "@/hooks/useAppToast";
 import { extractErrorMessage } from "@/utils/api-error";
+import type { AppSelectOption } from "@/components/ui/select";
 
 export const StaffManagementPage = () => {
   const toast = useAppToast();
@@ -37,17 +47,22 @@ export const StaffManagementPage = () => {
     fetchStaff,
     createStaff,
     updateStaff,
-    updateStatus
+    updateStatus,
+    resetPassword
   } = useStaffManagement();
 
   const [activeSearch, setActiveSearch] = useState("");
   const activeSearchRef = useRef("");
   const [selected, setSelected] = useState<Staff | null>(null);
+  const [reportOptions, setReportOptions] = useState<AppSelectOption[]>([]);
+  const [resetPasswordValue, setResetPasswordValue] = useState("");
   const [isStatusChanging, setIsStatusChanging] = useBoolean(false);
+  const [isResettingPassword, setIsResettingPassword] = useBoolean(false);
   const [pendingStatus, setPendingStatus] = useState<boolean>(false);
 
   const modalState = useDisclosure();
   const confirmState = useDisclosure();
+  const resetPasswordModal = useDisclosure();
 
   const refreshData = useCallback(
     async (search?: string) => {
@@ -60,9 +75,25 @@ export const StaffManagementPage = () => {
     [fetchStaff, toast.error]
   );
 
+  const refreshReportCatalog = useCallback(async () => {
+    try {
+      const response = await reportsService.getCatalog();
+      const options = response.data.reports.map((report) => ({
+        label: report.title,
+        value: report.key,
+        description: report.description,
+        searchText: `${report.title} ${report.key} ${report.category}`
+      }));
+      setReportOptions(options);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Unable to fetch reports catalog"));
+    }
+  }, [toast]);
+
   useEffect(() => {
     void refreshData();
-  }, [refreshData]);
+    void refreshReportCatalog();
+  }, [refreshData, refreshReportCatalog]);
 
   const openCreate = useCallback(() => {
     setSelected(null);
@@ -98,13 +129,15 @@ export const StaffManagementPage = () => {
       email?: string;
       role: UserRole;
       password?: string;
+      assignedReports?: string[];
     }) => {
       try {
         if (selected) {
           const message = await updateStaff(selected.id, {
             fullName: values.fullName,
             email: values.email,
-            role: values.role
+            role: values.role,
+            assignedReports: values.assignedReports
           });
           toast.success(message ?? "Staff member updated successfully");
         } else {
@@ -113,7 +146,8 @@ export const StaffManagementPage = () => {
             fullName: values.fullName,
             email: values.email,
             password: values.password ?? "",
-            role: values.role
+            role: values.role,
+            assignedReports: values.assignedReports
           });
           toast.success(message ?? "Staff member created successfully");
         }
@@ -147,6 +181,47 @@ export const StaffManagementPage = () => {
     }
   }, [confirmState, pendingStatus, selected, setIsStatusChanging, toast, updateStatus]);
 
+  const openResetPassword = useCallback((staffMember: Staff) => {
+    setSelected(staffMember);
+    setResetPasswordValue("");
+    resetPasswordModal.onOpen();
+  }, [resetPasswordModal]);
+
+  const submitResetPassword = useCallback(async () => {
+    if (!selected) {
+      return;
+    }
+
+    const nextPassword = resetPasswordValue.trim();
+    if (nextPassword.length < 8) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
+    if (!/[A-Za-z]/.test(nextPassword) || !/\d/.test(nextPassword)) {
+      toast.error("Password must contain letters and numbers.");
+      return;
+    }
+
+    setIsResettingPassword.on();
+    try {
+      const message = await resetPassword(selected.id, nextPassword);
+      toast.success(message ?? "Staff password reset successfully");
+      resetPasswordModal.onClose();
+      setResetPasswordValue("");
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Unable to reset password"));
+    } finally {
+      setIsResettingPassword.off();
+    }
+  }, [
+    resetPassword,
+    resetPasswordModal,
+    resetPasswordValue,
+    selected,
+    setIsResettingPassword,
+    toast
+  ]);
+
   const columns = useMemo(
     () => [
       {
@@ -168,6 +243,15 @@ export const StaffManagementPage = () => {
         render: (row: Staff) => (
           <Text textTransform="capitalize" fontWeight={600}>
             {row.role.replace("_", " ")}
+          </Text>
+        )
+      },
+      {
+        key: "reports",
+        header: "Reports Access",
+        render: (row: Staff) => (
+          <Text fontWeight={600} color={row.assignedReports.length ? "#2D1D17" : "#705B52"}>
+            {row.assignedReports.length ? `${row.assignedReports.length} assigned` : "No report access"}
           </Text>
         )
       },
@@ -199,11 +283,18 @@ export const StaffManagementPage = () => {
               variant="outline"
               onClick={() => openEdit(row)}
             />
+            <ActionIconButton
+              aria-label={`Reset password for ${row.fullName}`}
+              icon={<KeyRound size={16} />}
+              size="sm"
+              variant="outline"
+              onClick={() => openResetPassword(row)}
+            />
           </HStack>
         )
       }
     ],
-    [openEdit, triggerStatusChange]
+    [openEdit, openResetPassword, triggerStatusChange]
   );
 
   if (error && !staff.length && !loading) {
@@ -259,6 +350,7 @@ export const StaffManagementPage = () => {
         initialData={selected}
         onSubmit={submitStaff}
         loading={mutationLoading}
+        reportOptions={reportOptions}
       />
 
       <ConfirmDialog
@@ -271,6 +363,46 @@ export const StaffManagementPage = () => {
         onConfirm={() => void confirmStatusChange()}
         isLoading={isStatusChanging}
       />
+
+      <Modal
+        isOpen={resetPasswordModal.isOpen}
+        onClose={resetPasswordModal.onClose}
+        isCentered
+        size="md"
+        closeOnOverlayClick={false}
+        closeOnEsc={false}
+      >
+        <ModalOverlay />
+        <ModalContent borderRadius="16px">
+          <ModalHeader>Reset Staff Password</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack align="stretch" spacing={4}>
+              <Text color="#705B52" fontSize="sm">
+                Set a new password for{" "}
+                <Text as="span" fontWeight={700} color="#2A1A14">
+                  {selected?.fullName ?? "staff"}
+                </Text>
+                .
+              </Text>
+              <AppPasswordInput
+                label="New Password"
+                placeholder="Enter new password"
+                value={resetPasswordValue}
+                onChange={(event) => setResetPasswordValue(event.target.value)}
+              />
+            </VStack>
+          </ModalBody>
+          <ModalFooter gap={3}>
+            <AppButton variant="outline" onClick={resetPasswordModal.onClose}>
+              Cancel
+            </AppButton>
+            <AppButton isLoading={isResettingPassword} onClick={() => void submitResetPassword()}>
+              Reset Password
+            </AppButton>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </VStack>
   );
 };

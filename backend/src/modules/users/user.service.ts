@@ -50,6 +50,7 @@ export class UserService {
     email?: string | null;
     role: UserRole;
     isActive?: boolean;
+    assignedReports?: string[];
   }): Promise<SafeUser> {
     const whereConditions: FindOptionsWhere<User>[] = [
       { username: payload.username }
@@ -73,7 +74,8 @@ export class UserService {
       passwordHash: payload.passwordHash,
       email: payload.email ?? null,
       role: payload.role,
-      isActive: payload.isActive ?? true
+      isActive: payload.isActive ?? true,
+      assignedReports: payload.assignedReports ?? []
     });
 
     return this.userRepository.save(user);
@@ -81,11 +83,14 @@ export class UserService {
 
   async updateStaff(
     id: string,
-    payload: Partial<Pick<User, "fullName" | "email" | "role">>
+    payload: Partial<Pick<User, "fullName" | "email" | "role" | "assignedReports">>
   ): Promise<SafeUser> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) {
       throw new AppError(404, "Staff member not found");
+    }
+    if (user.role === UserRole.ADMIN) {
+      throw new AppError(403, "Admin account cannot be modified from staff management.");
     }
 
     if (payload.email && payload.email !== user.email) {
@@ -98,6 +103,9 @@ export class UserService {
     user.fullName = payload.fullName ?? user.fullName;
     user.email = payload.email === undefined ? user.email : payload.email;
     user.role = payload.role ?? user.role;
+    if (payload.assignedReports !== undefined) {
+      user.assignedReports = payload.assignedReports;
+    }
 
     return this.userRepository.save(user);
   }
@@ -107,8 +115,29 @@ export class UserService {
     if (!user) {
       throw new AppError(404, "Staff member not found");
     }
+    if (user.role === UserRole.ADMIN) {
+      throw new AppError(403, "Admin account cannot be modified from staff management.");
+    }
 
     user.isActive = isActive;
+    return this.userRepository.save(user);
+  }
+
+  async resetStaffPassword(id: string, passwordHash: string): Promise<SafeUser> {
+    const user = await this.userRepository
+      .createQueryBuilder("user")
+      .addSelect("user.passwordHash")
+      .where("user.id = :id", { id })
+      .getOne();
+
+    if (!user) {
+      throw new AppError(404, "Staff member not found");
+    }
+    if (user.role === UserRole.ADMIN) {
+      throw new AppError(403, "Admin account cannot be modified from staff management.");
+    }
+
+    user.passwordHash = passwordHash;
     return this.userRepository.save(user);
   }
 }

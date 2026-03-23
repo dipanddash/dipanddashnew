@@ -3,18 +3,13 @@ import {
   Button,
   HStack,
   Select,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack
 } from "@chakra-ui/react";
 import { useMemo, useState } from "react";
 
 import { usePos } from "@/app/PosContext";
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import type { KitchenStatus, PosOrder } from "@/types/pos";
 
 const statusOptions: Array<{ label: string; value: KitchenStatus }> = [
@@ -52,6 +47,101 @@ export const StaffKitchenPage = () => {
 
   const rows = useMemo(() => kitchenOrders, [kitchenOrders]);
 
+  const columns = useMemo<PosTableColumn<PosOrder>[]>(
+    () => [
+      {
+        key: "invoiceNumber",
+        header: "Invoice",
+        render: (order) => <Text fontWeight={700}>{order.invoiceNumber}</Text>
+      },
+      {
+        key: "customer",
+        header: "Customer",
+        render: (order) => (
+          <VStack align="start" spacing={0}>
+            <Text>{order.customer?.name ?? "Walk-in"}</Text>
+            <Text fontSize="xs" color="#7A6258">
+              {order.customer?.phone ?? "-"}
+            </Text>
+          </VStack>
+        )
+      },
+      {
+        key: "orderType",
+        header: "Type",
+        render: (order) => <Text textTransform="capitalize">{toLabel(order.orderType, "takeaway")}</Text>
+      },
+      {
+        key: "items",
+        header: "Items",
+        render: (order) => (
+          <VStack align="start" spacing={1} maxW="460px">
+            {order.lines.map((line) => (
+              <Text key={line.lineId} fontSize="xs" color="#5E4A41">
+                {formatLineText(line)}
+              </Text>
+            ))}
+          </VStack>
+        )
+      },
+      {
+        key: "status",
+        header: "Status",
+        render: (order) => {
+          const kitchenStatus = resolveKitchenStatus(order.kitchenStatus);
+          return (
+            <Text textTransform="capitalize" fontWeight={700} color="#7A2620">
+              {toLabel(kitchenStatus, "queued")}
+            </Text>
+          );
+        }
+      },
+      {
+        key: "update",
+        header: "Update",
+        alwaysVisible: true,
+        render: (order) => {
+          const kitchenStatus = resolveKitchenStatus(order.kitchenStatus);
+          return (
+            <HStack>
+              <Select
+                size="sm"
+                value={statusDrafts[order.localOrderId] ?? kitchenStatus}
+                onChange={(event) =>
+                  setStatusDrafts((previous) => ({
+                    ...previous,
+                    [order.localOrderId]: event.target.value as KitchenStatus
+                  }))
+                }
+              >
+                {statusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void updateKitchenStatus(order.localOrderId, statusDrafts[order.localOrderId] ?? kitchenStatus)
+                }
+              >
+                Save
+              </Button>
+            </HStack>
+          );
+        }
+      },
+      {
+        key: "tableLabel",
+        header: "Table",
+        render: (order) => order.tableLabel ?? "-"
+      }
+    ],
+    [statusDrafts, updateKitchenStatus]
+  );
+
   return (
     <VStack align="stretch" spacing={4}>
       <HStack justify="space-between" flexWrap="wrap" gap={3}>
@@ -68,106 +158,13 @@ export const StaffKitchenPage = () => {
         </Button>
       </HStack>
 
-      <Box
-        border="1px solid"
-        borderColor="rgba(132, 79, 52, 0.2)"
-        borderRadius="14px"
-        overflow="hidden"
-        bg="white"
-        boxShadow="sm"
-      >
-        <Table size="sm">
-          <Thead bg="rgba(247, 238, 229, 0.9)">
-            <Tr>
-              <Th>Invoice</Th>
-              <Th>Customer</Th>
-              <Th>Type</Th>
-              <Th>Table</Th>
-              <Th>Items</Th>
-              <Th>Status</Th>
-              <Th>Update</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {rows.length ? (
-              rows.map((order) => {
-                const orderTypeLabel = toLabel(order.orderType, "takeaway");
-                const kitchenStatus = resolveKitchenStatus(order.kitchenStatus);
-
-                return (
-                <Tr key={order.localOrderId}>
-                  <Td fontWeight={700}>{order.invoiceNumber}</Td>
-                  <Td>
-                    <VStack align="start" spacing={0}>
-                      <Text>{order.customer?.name ?? "Walk-in"}</Text>
-                      <Text fontSize="xs" color="#7A6258">
-                        {order.customer?.phone ?? "-"}
-                      </Text>
-                    </VStack>
-                  </Td>
-                  <Td textTransform="capitalize">{orderTypeLabel}</Td>
-                  <Td>{order.tableLabel ?? "-"}</Td>
-                  <Td maxW="460px">
-                    <VStack align="start" spacing={1}>
-                      {order.lines.map((line) => (
-                        <Text key={line.lineId} fontSize="xs" color="#5E4A41">
-                          {formatLineText(line)}
-                        </Text>
-                      ))}
-                    </VStack>
-                  </Td>
-                  <Td>
-                    <Text textTransform="capitalize" fontWeight={700} color="#7A2620">
-                      {toLabel(kitchenStatus, "queued")}
-                    </Text>
-                  </Td>
-                  <Td>
-                    <HStack>
-                      <Select
-                        size="sm"
-                        value={statusDrafts[order.localOrderId] ?? kitchenStatus}
-                        onChange={(event) =>
-                          setStatusDrafts((previous) => ({
-                            ...previous,
-                            [order.localOrderId]: event.target.value as KitchenStatus
-                          }))
-                        }
-                      >
-                        {statusOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </Select>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void updateKitchenStatus(
-                            order.localOrderId,
-                            statusDrafts[order.localOrderId] ?? kitchenStatus
-                          )
-                        }
-                      >
-                        Save
-                      </Button>
-                    </HStack>
-                  </Td>
-                </Tr>
-              );
-              })
-            ) : (
-              <Tr>
-                <Td colSpan={7}>
-                  <Box py={8} textAlign="center" color="#7A6258">
-                    No kitchen orders yet. Use "Send To Kitchen" from billing.
-                  </Box>
-                </Td>
-              </Tr>
-            )}
-          </Tbody>
-        </Table>
-      </Box>
+      <PosDataTable
+        rows={rows}
+        columns={columns}
+        getRowId={(order) => order.localOrderId}
+        emptyMessage='No kitchen orders yet. Use "Send To Kitchen" from billing.'
+        maxColumns={6}
+      />
     </VStack>
   );
 };

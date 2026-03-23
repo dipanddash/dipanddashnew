@@ -44,6 +44,39 @@ const parseSqlStatements = (sql: string) =>
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 
+const normalizePlayerCount = (playerCount: unknown, customers: unknown) => {
+  const parsed = Number(playerCount);
+  if (Number.isFinite(parsed) && parsed >= 1) {
+    return Math.max(1, Math.floor(parsed));
+  }
+  if (Array.isArray(customers)) {
+    return Math.max(1, customers.length);
+  }
+  return 1;
+};
+
+const normalizeResourceCodes = (resourceCodes: unknown, fallbackResourceCode: unknown) => {
+  if (Array.isArray(resourceCodes)) {
+    const cleaned = resourceCodes
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+    if (cleaned.length) {
+      return [...new Set(cleaned)];
+    }
+  }
+  const fallback = typeof fallbackResourceCode === "string" ? fallbackResourceCode.trim() : "";
+  return fallback ? [fallback] : [];
+};
+
+const normalizeGamingBookingRow = (row: GamingBooking) => ({
+  ...row,
+  playerCount: normalizePlayerCount((row as GamingBooking & { playerCount?: number }).playerCount, row.customers),
+  resourceCodes: normalizeResourceCodes(
+    (row as GamingBooking & { resourceCodes?: string[] }).resourceCodes,
+    row.resourceCode
+  ) as GamingBooking["resourceCodes"]
+});
+
 class PosStorage {
   private db: SqlDb | null = null;
   private state: LocalState = emptyState();
@@ -112,6 +145,20 @@ class PosStorage {
       } catch {
         // no-op: column already exists
       }
+      try {
+        await this.db.execute(
+          "ALTER TABLE gaming_bookings_local ADD COLUMN player_count INTEGER NOT NULL DEFAULT 1"
+        );
+      } catch {
+        // no-op: column already exists
+      }
+      try {
+        await this.db.execute(
+          "ALTER TABLE gaming_bookings_local ADD COLUMN resource_codes_json TEXT NOT NULL DEFAULT '[]'"
+        );
+      } catch {
+        // no-op: column already exists
+      }
     } else {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -122,7 +169,9 @@ class PosStorage {
             ...parsed,
             customers: parsed.customers ?? [],
             orders: parsed.orders ?? [],
-            gamingBookings: parsed.gamingBookings ?? [],
+            gamingBookings: (parsed.gamingBookings ?? []).map((row) =>
+              normalizeGamingBookingRow(row as GamingBooking)
+            ),
             pendingBills: parsed.pendingBills ?? [],
             queue: parsed.queue ?? [],
             settings: parsed.settings ?? {}
@@ -683,14 +732,16 @@ class PosStorage {
 
     if (this.db) {
       await this.db.execute(
-        "INSERT OR REPLACE INTO gaming_bookings_local (local_booking_id, server_booking_id, booking_number, booking_type, resource_code, resource_label, customers_json, primary_customer_name, primary_customer_phone, check_in_at, check_out_at, hourly_rate, final_amount, status, payment_status, payment_mode, food_order_reference, food_invoice_number, food_invoice_status, food_and_beverage_amount, note, booking_channel, source_device_id, staff_id, staff_name, sync_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO gaming_bookings_local (local_booking_id, server_booking_id, booking_number, booking_type, resource_code, resource_codes_json, resource_label, player_count, customers_json, primary_customer_name, primary_customer_phone, check_in_at, check_out_at, hourly_rate, final_amount, status, payment_status, payment_mode, food_order_reference, food_invoice_number, food_invoice_status, food_and_beverage_amount, note, booking_channel, source_device_id, staff_id, staff_name, sync_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           booking.localBookingId,
           booking.serverBookingId,
           booking.bookingNumber,
           booking.bookingType,
           booking.resourceCode,
+          JSON.stringify(booking.resourceCodes),
           booking.resourceLabel,
+          booking.playerCount,
           JSON.stringify(booking.customers),
           booking.primaryCustomerName,
           booking.primaryCustomerPhone,
@@ -737,7 +788,9 @@ class PosStorage {
         booking_number: string;
         booking_type: GamingBooking["bookingType"];
         resource_code: GamingBooking["resourceCode"];
+        resource_codes_json: string;
         resource_label: string;
+        player_count: number;
         customers_json: string;
         primary_customer_name: string;
         primary_customer_phone: string;
@@ -767,16 +820,21 @@ class PosStorage {
         return null;
       }
 
-      return {
-        localBookingId: row.local_booking_id,
-        serverBookingId: row.server_booking_id,
-        bookingNumber: row.booking_number,
-        bookingType: row.booking_type,
-        resourceCode: row.resource_code,
-        resourceLabel: row.resource_label,
-        customers: JSON.parse(row.customers_json),
-        primaryCustomerName: row.primary_customer_name,
-        primaryCustomerPhone: row.primary_customer_phone,
+        return {
+          localBookingId: row.local_booking_id,
+          serverBookingId: row.server_booking_id,
+          bookingNumber: row.booking_number,
+          bookingType: row.booking_type,
+          resourceCode: row.resource_code,
+          resourceCodes: normalizeResourceCodes(
+            row.resource_codes_json ? JSON.parse(row.resource_codes_json) : [],
+            row.resource_code
+          ) as GamingBooking["resourceCodes"],
+          resourceLabel: row.resource_label,
+          playerCount: normalizePlayerCount(row.player_count, JSON.parse(row.customers_json)),
+          customers: JSON.parse(row.customers_json),
+          primaryCustomerName: row.primary_customer_name,
+          primaryCustomerPhone: row.primary_customer_phone,
         checkInAt: row.check_in_at,
         checkOutAt: row.check_out_at,
         hourlyRate: Number(row.hourly_rate),
@@ -799,7 +857,8 @@ class PosStorage {
       } satisfies GamingBooking;
     }
 
-    return this.state.gamingBookings.find((entry) => entry.localBookingId === localBookingId) ?? null;
+    const row = this.state.gamingBookings.find((entry) => entry.localBookingId === localBookingId);
+    return row ? normalizeGamingBookingRow(row) : null;
   }
 
   async listGamingBookings(filters?: GamingBookingListFilter, limit = 500) {
@@ -836,7 +895,9 @@ class PosStorage {
         booking_number: string;
         booking_type: GamingBooking["bookingType"];
         resource_code: GamingBooking["resourceCode"];
+        resource_codes_json: string;
         resource_label: string;
+        player_count: number;
         customers_json: string;
         primary_customer_name: string;
         primary_customer_phone: string;
@@ -869,7 +930,12 @@ class PosStorage {
             bookingNumber: row.booking_number,
             bookingType: row.booking_type,
             resourceCode: row.resource_code,
+            resourceCodes: normalizeResourceCodes(
+              row.resource_codes_json ? JSON.parse(row.resource_codes_json) : [],
+              row.resource_code
+            ) as GamingBooking["resourceCodes"],
             resourceLabel: row.resource_label,
+            playerCount: normalizePlayerCount(row.player_count, JSON.parse(row.customers_json)),
             customers: JSON.parse(row.customers_json),
             primaryCustomerName: row.primary_customer_name,
             primaryCustomerPhone: row.primary_customer_phone,
@@ -915,7 +981,10 @@ class PosStorage {
           row.resourceLabel.toLowerCase().includes(search)
       );
     }
-    return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+    return rows
+      .map((row) => normalizeGamingBookingRow(row))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, limit);
   }
 
   async upsertPendingBill(bill: PendingBillSummary) {

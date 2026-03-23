@@ -14,6 +14,8 @@ import { posCatalogRoutes } from "../modules/pos-catalog/pos-catalog.routes";
 import { posSyncRoutes } from "../modules/pos-sync/pos-sync.routes";
 import { gamingRoutes } from "../modules/gaming/gaming.routes";
 import { procurementRoutes } from "../modules/procurement/procurement.routes";
+import { cashAuditRoutes } from "../modules/cash-audit/cash-audit.routes";
+import { reportsRoutes } from "../modules/reports/reports.routes";
 
 const router = Router();
 
@@ -31,5 +33,7 @@ router.use("/pos-catalog", posCatalogRoutes);
 router.use("/pos-sync", posSyncRoutes);
 router.use("/gaming", gamingRoutes);
 router.use("/procurement", procurementRoutes);
+router.use("/cash-audit", cashAuditRoutes);
+router.use("/reports", reportsRoutes);
 
 export const apiRoutes = router;

@@ -7,6 +7,12 @@ import { AppError } from "../../errors/app-error";
 import { ProcurementService } from "./procurement.service";
 import { procurementUnitsData } from "./procurement.validation";
 
+type UploadRequest = Request & {
+  file?: {
+    filename: string;
+  };
+};
+
 const parsePositiveInt = (value: unknown, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -29,6 +35,18 @@ const parseBoolean = (value: unknown, fallback: boolean) => {
 
 export class ProcurementController {
   private readonly procurementService = new ProcurementService();
+
+  uploadInvoiceImage = async (req: UploadRequest, res: Response): Promise<Response> => {
+    if (!req.file) {
+      throw new AppError(StatusCodes.BAD_REQUEST, "Please choose an invoice image to upload.");
+    }
+
+    const imageUrl = `${req.protocol}://${req.get("host")}/uploads/purchase-invoices/${req.file.filename}`;
+    return sendSuccess(res, StatusCodes.CREATED, "Invoice image uploaded successfully", {
+      imageUrl,
+      fileName: req.file.filename
+    });
+  };
 
   listSuppliers = async (req: Request, res: Response): Promise<Response> => {
     const data = await this.procurementService.listSuppliers({

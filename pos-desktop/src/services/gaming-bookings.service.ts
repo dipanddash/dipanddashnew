@@ -75,6 +75,8 @@ const buildSyncEvent = (booking: GamingBooking, idempotencyKey: string) => ({
     bookingNumber: booking.bookingNumber,
     bookingType: booking.bookingType,
     resourceCode: booking.resourceCode,
+    resourceCodes: booking.resourceCodes,
+    playerCount: booking.playerCount,
     checkInAt: booking.checkInAt,
     checkOutAt: booking.checkOutAt ?? undefined,
     hourlyRate: booking.hourlyRate,
@@ -136,23 +138,52 @@ const sanitizePayment = (input: { paymentStatus?: GamingPaymentStatus; paymentMo
   };
 };
 
+const sanitizePlayerCount = (input: unknown, fallbackFromCustomers: number) => {
+  const parsed = Number(input);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return Math.max(1, fallbackFromCustomers);
+  }
+  return Math.max(1, Math.floor(parsed), fallbackFromCustomers);
+};
+
+const normalizeResourceCodes = (
+  bookingType: GamingBookingType,
+  input: { resourceCodes?: GamingResourceCode[]; resourceCode?: GamingResourceCode }
+) => {
+  const allowed = new Set(
+    (bookingType === "snooker" ? SNOOKER_RESOURCES : CONSOLE_RESOURCES).map((entry) => entry.code)
+  );
+  const fromArray = (input.resourceCodes ?? []).filter((code) => allowed.has(code));
+  const unique = [...new Set(fromArray)];
+  if (unique.length) {
+    return unique;
+  }
+  if (input.resourceCode && allowed.has(input.resourceCode)) {
+    return [input.resourceCode];
+  }
+  return [];
+};
+
 export const gamingBookingsService = {
   getResourcesByType(bookingType: GamingBookingType) {
     return bookingType === "snooker" ? SNOOKER_RESOURCES : CONSOLE_RESOURCES;
   },
 
-  async assertResourceAvailable(resourceCode: GamingResourceCode, excludeLocalBookingId?: string) {
+  async assertResourcesAvailable(resourceCodes: GamingResourceCode[], excludeLocalBookingId?: string) {
     const occupied = await gamingBookingsRepository.list({ status: "ongoing" }, 600);
     const upcoming = await gamingBookingsRepository.list({ status: "upcoming" }, 600);
     const conflict = [...occupied, ...upcoming].find(
       (booking) =>
-        booking.resourceCode === resourceCode &&
         booking.localBookingId !== excludeLocalBookingId &&
         booking.status !== "completed" &&
-        booking.status !== "cancelled"
+        booking.status !== "cancelled" &&
+        (booking.resourceCodes ?? [booking.resourceCode]).some((code) => resourceCodes.includes(code))
     );
     if (conflict) {
-      throw new Error(`${getResourceLabel(resourceCode)} is currently occupied.`);
+      const blocked = (conflict.resourceCodes ?? [conflict.resourceCode]).find((code) =>
+        resourceCodes.includes(code)
+      );
+      throw new Error(`${getResourceLabel(blocked ?? conflict.resourceCode)} is currently occupied.`);
     }
   },
 
@@ -167,7 +198,15 @@ export const gamingBookingsService = {
   async getResourceAvailability(bookingType?: GamingBookingType) {
     const active = await gamingBookingsRepository.list({ status: "ongoing" }, 200);
     const resources = bookingType ? this.getResourcesByType(bookingType) : ALL_RESOURCES;
-    const activeByResource = new Map(active.map((booking) => [booking.resourceCode, booking]));
+    const activeByResource = new Map<GamingResourceCode, GamingBooking>();
+    active.forEach((booking) => {
+      const codes = (booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode]) as GamingResourceCode[];
+      codes.forEach((code) => {
+        if (!activeByResource.has(code)) {
+          activeByResource.set(code, booking);
+        }
+      });
+    });
 
     return resources.map((resource) => ({
       ...resource,
@@ -179,7 +218,9 @@ export const gamingBookingsService = {
   async createBooking(
     input: {
       bookingType: GamingBookingType;
-      resourceCode: GamingResourceCode;
+      resourceCode?: GamingResourceCode;
+      resourceCodes?: GamingResourceCode[];
+      playerCount?: number;
       customers: Array<{ name: string; phone: string }>;
       checkInAt?: string;
       hourlyRate: number;
@@ -195,8 +236,18 @@ export const gamingBookingsService = {
     },
     session: StaffSession
   ) {
-    await this.assertResourceAvailable(input.resourceCode);
+    const resourceCodes = normalizeResourceCodes(input.bookingType, input);
+    if (!resourceCodes.length) {
+      throw new Error("Select at least one board/console.");
+    }
+    await this.assertResourcesAvailable(resourceCodes);
+    const primaryResourceCode = resourceCodes[0];
+    const resourceLabel =
+      resourceCodes.length > 1
+        ? `${getResourceLabel(primaryResourceCode)} +${resourceCodes.length - 1}`
+        : getResourceLabel(primaryResourceCode);
     const customers = sanitizeCustomers(input.customers);
+    const playerCount = sanitizePlayerCount(input.playerCount, customers.length);
     const payment = sanitizePayment({ paymentStatus: input.paymentStatus, paymentMode: input.paymentMode });
     const checkInAt = input.checkInAt ? new Date(input.checkInAt).toISOString() : nowIso();
     const status =
@@ -209,8 +260,10 @@ export const gamingBookingsService = {
       serverBookingId: null,
       bookingNumber: buildBookingNumber(),
       bookingType: input.bookingType,
-      resourceCode: input.resourceCode,
-      resourceLabel: getResourceLabel(input.resourceCode),
+      resourceCode: primaryResourceCode,
+      resourceCodes,
+      resourceLabel,
+      playerCount,
       customers,
       primaryCustomerName: customers[0].name,
       primaryCustomerPhone: customers[0].phone,
@@ -296,7 +349,9 @@ export const gamingBookingsService = {
     input: {
       bookingType?: GamingBookingType;
       resourceCode?: GamingResourceCode;
+      resourceCodes?: GamingResourceCode[];
       customers?: Array<{ name: string; phone: string }>;
+      playerCount?: number;
       checkInAt?: string;
       hourlyRate?: number;
       status?: "upcoming" | "ongoing" | "cancelled";
@@ -314,22 +369,41 @@ export const gamingBookingsService = {
     }
 
     const nextBookingType = input.bookingType ?? booking.bookingType;
-    const nextResourceCode = input.resourceCode ?? booking.resourceCode;
-    if (nextResourceCode !== booking.resourceCode || nextBookingType !== booking.bookingType) {
-      await this.assertResourceAvailable(nextResourceCode, booking.localBookingId);
+    const nextResourceCodes = normalizeResourceCodes(nextBookingType, {
+      resourceCodes: input.resourceCodes ?? booking.resourceCodes,
+      resourceCode: input.resourceCode ?? booking.resourceCode
+    });
+    if (!nextResourceCodes.length) {
+      throw new Error("Select at least one board/console.");
+    }
+    const nextResourceCode = nextResourceCodes[0];
+    if (
+      nextBookingType !== booking.bookingType ||
+      JSON.stringify(nextResourceCodes) !== JSON.stringify(booking.resourceCodes ?? [booking.resourceCode])
+    ) {
+      await this.assertResourcesAvailable(nextResourceCodes, booking.localBookingId);
     }
 
     const payment = sanitizePayment({
       paymentStatus: input.paymentStatus ?? booking.paymentStatus,
       paymentMode: input.paymentMode ?? booking.paymentMode
     });
+    const nextCustomers = input.customers?.length ? sanitizeCustomers(input.customers) : booking.customers;
 
     const nextBooking: GamingBooking = {
       ...booking,
       bookingType: nextBookingType,
       resourceCode: nextResourceCode,
-      resourceLabel: getResourceLabel(nextResourceCode),
-      customers: input.customers?.length ? sanitizeCustomers(input.customers) : booking.customers,
+      resourceCodes: nextResourceCodes,
+      resourceLabel:
+        nextResourceCodes.length > 1
+          ? `${getResourceLabel(nextResourceCode)} +${nextResourceCodes.length - 1}`
+          : getResourceLabel(nextResourceCode),
+      customers: nextCustomers,
+      playerCount: sanitizePlayerCount(
+        input.playerCount === undefined ? booking.playerCount : input.playerCount,
+        nextCustomers.length
+      ),
       checkInAt: input.checkInAt ? new Date(input.checkInAt).toISOString() : booking.checkInAt,
       hourlyRate: roundCurrency(Math.max(0, Number(input.hourlyRate ?? booking.hourlyRate) || 0)),
       status: input.status ?? booking.status,
@@ -441,7 +515,7 @@ export const gamingBookingsService = {
       upcomingCount: upcoming.length,
       completedCount: completed.length,
       pendingPaymentsCount: pendingPayments.length,
-      activePlayers: ongoing.reduce((sum, booking) => sum + booking.customers.length, 0),
+      activePlayers: ongoing.reduce((sum, booking) => sum + booking.playerCount, 0),
       endingSoonCount: endingSoon.length,
       upcomingBookings: upcoming
         .sort((a, b) => a.checkInAt.localeCompare(b.checkInAt))

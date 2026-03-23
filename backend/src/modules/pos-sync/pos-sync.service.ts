@@ -113,6 +113,7 @@ type GamingBookingUpsertEvent = {
     bookingNumber: string;
     bookingType: "snooker" | "console";
     resourceCode: string;
+    resourceCodes?: string[];
     checkInAt?: string;
     checkOutAt?: string;
     hourlyRate: number;

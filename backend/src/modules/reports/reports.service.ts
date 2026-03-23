@@ -1,0 +1,1513 @@
+import { UserRole } from "../../constants/roles";
+import { AppDataSource } from "../../database/data-source";
+import { AppError } from "../../errors/app-error";
+import { AttendanceRecord } from "../attendance/attendance.entity";
+import { CashAudit } from "../cash-audit/cash-audit.entity";
+import { GamingBooking } from "../gaming/gaming-booking.entity";
+import { DailyAllocation } from "../ingredients/daily-allocation.entity";
+import { Ingredient } from "../ingredients/ingredient.entity";
+import { IngredientStock } from "../ingredients/ingredient-stock.entity";
+import { InvoiceLine } from "../invoices/invoice-line.entity";
+import { InvoiceUsageEvent } from "../invoices/invoice-usage-event.entity";
+import { Invoice } from "../invoices/invoice.entity";
+import { AddOn } from "../items/add-on.entity";
+import { Combo } from "../items/combo.entity";
+import { Item } from "../items/item.entity";
+import { Product } from "../procurement/product.entity";
+import { PurchaseOrder } from "../procurement/purchase-order.entity";
+import { Supplier } from "../procurement/supplier.entity";
+import { User } from "../users/user.entity";
+import { REPORT_CATALOG, REPORT_KEYS, type ReportKey } from "./reports.constants";
+
+type GenerateReportInput = {
+  reportKey: ReportKey;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  page: number;
+  limit: number;
+};
+
+type ReportUserContext = {
+  id: string;
+  role: UserRole;
+};
+
+type ReportStat = {
+  label: string;
+  value: string | number;
+  hint?: string;
+};
+
+type ReportColumn = {
+  key: string;
+  label: string;
+};
+
+type ReportRow = Record<string, string | number | null>;
+
+type ReportPayload = {
+  stats: ReportStat[];
+  columns: ReportColumn[];
+  rows: ReportRow[];
+};
+
+const toNumber = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toMoney = (value: unknown) => Number(toNumber(value).toFixed(2));
+const toQty = (value: unknown) => Number(toNumber(value).toFixed(3));
+const toPercent = (value: unknown) => Number(toNumber(value).toFixed(2));
+
+const startOfDay = (value: Date) => {
+  const next = new Date(value);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const endOfDay = (value: Date) => {
+  const next = new Date(value);
+  next.setHours(23, 59, 59, 999);
+  return next;
+};
+
+const formatDate = (value: Date) => value.toISOString().slice(0, 10);
+
+const getDefaultRange = () => {
+  const to = endOfDay(new Date());
+  const from = startOfDay(new Date(to));
+  from.setDate(from.getDate() - 6);
+  return { from, to };
+};
+
+const getDateRange = (dateFrom?: string, dateTo?: string) => {
+  const defaults = getDefaultRange();
+  const from = dateFrom ? startOfDay(new Date(dateFrom)) : defaults.from;
+  const to = dateTo ? endOfDay(new Date(dateTo)) : defaults.to;
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new AppError(422, "Date must be in YYYY-MM-DD format.");
+  }
+
+  if (from > to) {
+    throw new AppError(422, "Date From must be before Date To.");
+  }
+
+  return { from, to };
+};
+
+const minutesBetween = (start: Date, end: Date) =>
+  Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+
+const toIso = (value: Date | null | undefined) => (value ? value.toISOString() : null);
+
+export class ReportsService {
+  private readonly userRepository = AppDataSource.getRepository(User);
+  private readonly invoiceRepository = AppDataSource.getRepository(Invoice);
+  private readonly invoiceLineRepository = AppDataSource.getRepository(InvoiceLine);
+  private readonly usageRepository = AppDataSource.getRepository(InvoiceUsageEvent);
+  private readonly purchaseRepository = AppDataSource.getRepository(PurchaseOrder);
+  private readonly ingredientRepository = AppDataSource.getRepository(Ingredient);
+  private readonly ingredientStockRepository = AppDataSource.getRepository(IngredientStock);
+  private readonly allocationRepository = AppDataSource.getRepository(DailyAllocation);
+  private readonly attendanceRepository = AppDataSource.getRepository(AttendanceRecord);
+  private readonly itemRepository = AppDataSource.getRepository(Item);
+  private readonly addOnRepository = AppDataSource.getRepository(AddOn);
+  private readonly comboRepository = AppDataSource.getRepository(Combo);
+  private readonly productRepository = AppDataSource.getRepository(Product);
+  private readonly gamingRepository = AppDataSource.getRepository(GamingBooking);
+  private readonly cashAuditRepository = AppDataSource.getRepository(CashAudit);
+
+  private async getUserAssignedReports(userId: string): Promise<ReportKey[]> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ["id", "assignedReports"]
+    });
+
+    if (!user) {
+      throw new AppError(404, "User not found");
+    }
+
+    return (user.assignedReports ?? []).filter((key): key is ReportKey =>
+      (REPORT_KEYS as readonly string[]).includes(key)
+    );
+  }
+
+  async getCatalog(user: ReportUserContext) {
+    if (user.role === UserRole.ADMIN) {
+      return {
+        reports: REPORT_CATALOG
+      };
+    }
+
+    const assigned = await this.getUserAssignedReports(user.id);
+    const assignedSet = new Set(assigned);
+    return {
+      reports: REPORT_CATALOG.filter((report) => assignedSet.has(report.key))
+    };
+  }
+
+  private async assertAccess(user: ReportUserContext, key: ReportKey) {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+
+    const assigned = await this.getUserAssignedReports(user.id);
+    if (!assigned.includes(key)) {
+      throw new AppError(403, "This report is not assigned to your account.");
+    }
+  }
+
+  private applyDateFilter(query: ReturnType<typeof this.invoiceRepository.createQueryBuilder>, from: Date, to: Date) {
+    return query.andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to });
+  }
+
+  private finalizeReportRows(rows: ReportRow[], search: string | undefined, page: number, limit: number) {
+    const normalizedSearch = search?.trim().toLowerCase();
+    const filtered = normalizedSearch
+      ? rows.filter((row) =>
+          Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch))
+        )
+      : rows;
+
+    const safePage = Math.max(1, page || 1);
+    const safeLimit = Math.min(500, Math.max(1, limit || 50));
+    const offset = (safePage - 1) * safeLimit;
+    const pagedRows = filtered.slice(offset, offset + safeLimit);
+
+    return {
+      rows: pagedRows,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        total: filtered.length,
+        totalPages: Math.max(1, Math.ceil(filtered.length / safeLimit))
+      }
+    };
+  }
+
+  async generateReport(user: ReportUserContext, input: GenerateReportInput) {
+    await this.assertAccess(user, input.reportKey);
+    const reportDefinition = REPORT_CATALOG.find((item) => item.key === input.reportKey);
+    if (!reportDefinition) {
+      throw new AppError(404, "Report definition not found");
+    }
+
+    const { from, to } = getDateRange(input.dateFrom, input.dateTo);
+    const payload = await this.dispatchGenerateReport(input.reportKey, from, to);
+    const finalized = this.finalizeReportRows(payload.rows, input.search, input.page, input.limit);
+
+    return {
+      report: reportDefinition,
+      range: {
+        dateFrom: formatDate(from),
+        dateTo: formatDate(to),
+        generatedAt: new Date().toISOString()
+      },
+      stats: payload.stats,
+      columns: payload.columns,
+      rows: finalized.rows,
+      pagination: finalized.pagination
+    };
+  }
+
+  private async generateDailySalesReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .select("DATE(invoice.createdAt)", "date")
+        .addSelect("COUNT(invoice.id)", "orders")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "sales")
+        .addSelect("COALESCE(SUM(invoice.taxAmount),0)", "tax")
+        .addSelect(
+          "COALESCE(SUM(invoice.itemDiscountAmount + invoice.couponDiscountAmount + invoice.manualDiscountAmount),0)",
+          "discount"
+        )
+        .groupBy("DATE(invoice.createdAt)")
+        .orderBy("DATE(invoice.createdAt)", "ASC"),
+      from,
+      to
+    ).getRawMany<{ date: string; orders: string; sales: string; tax: string; discount: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      date: row.date,
+      orders: Number(row.orders ?? 0),
+      sales: toMoney(row.sales),
+      tax: toMoney(row.tax),
+      discount: toMoney(row.discount),
+      netSales: toMoney(toNumber(row.sales) - toNumber(row.tax))
+    }));
+
+    const totalSales = parsedRows.reduce((sum, row) => sum + toNumber(row.sales), 0);
+    const totalOrders = parsedRows.reduce((sum, row) => sum + toNumber(row.orders), 0);
+
+    return {
+      stats: [
+        { label: "Total Sales", value: toMoney(totalSales) },
+        { label: "Total Orders", value: totalOrders },
+        { label: "Average Order Value", value: totalOrders ? toMoney(totalSales / totalOrders) : 0 }
+      ],
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "orders", label: "Orders" },
+        { key: "sales", label: "Sales" },
+        { key: "tax", label: "Tax" },
+        { key: "discount", label: "Discount" },
+        { key: "netSales", label: "Net Sales" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateProductWiseSalesReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.invoiceLineRepository
+      .createQueryBuilder("line")
+      .leftJoin(Invoice, "invoice", "invoice.id = line.invoiceId")
+      .where("invoice.status = 'paid'")
+      .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+      .select("line.nameSnapshot", "name")
+      .addSelect("line.lineType", "lineType")
+      .addSelect("COALESCE(SUM(line.quantity),0)", "quantity")
+      .addSelect("COALESCE(SUM(line.lineTotal),0)", "total")
+      .addSelect("COALESCE(AVG(line.unitPrice),0)", "avgPrice")
+      .groupBy("line.nameSnapshot")
+      .addGroupBy("line.lineType")
+      .orderBy("COALESCE(SUM(line.lineTotal),0)", "DESC")
+      .getRawMany<{ name: string; lineType: string; quantity: string; total: string; avgPrice: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      name: row.name,
+      type: row.lineType,
+      quantity: toQty(row.quantity),
+      totalSales: toMoney(row.total),
+      averageUnitPrice: toMoney(row.avgPrice)
+    }));
+
+    return {
+      stats: [
+        { label: "Lines", value: parsedRows.length },
+        { label: "Total Product Sales", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalSales, 0)) },
+        {
+          label: "Top Seller",
+          value: parsedRows[0]?.name ?? "-",
+          hint: parsedRows[0] ? `Sales ${parsedRows[0].totalSales}` : undefined
+        }
+      ],
+      columns: [
+        { key: "name", label: "Name" },
+        { key: "type", label: "Type" },
+        { key: "quantity", label: "Quantity" },
+        { key: "averageUnitPrice", label: "Avg Price" },
+        { key: "totalSales", label: "Total Sales" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generatePaymentMethodReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .select("invoice.paymentMode", "paymentMode")
+        .addSelect("COUNT(invoice.id)", "count")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "amount")
+        .groupBy("invoice.paymentMode")
+        .orderBy("COALESCE(SUM(invoice.totalAmount),0)", "DESC"),
+      from,
+      to
+    ).getRawMany<{ paymentMode: string; count: string; amount: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      paymentMode: row.paymentMode,
+      invoices: Number(row.count ?? 0),
+      amount: toMoney(row.amount)
+    }));
+
+    return {
+      stats: [
+        { label: "Payment Modes", value: parsedRows.length },
+        { label: "Total Collected", value: toMoney(parsedRows.reduce((sum, row) => sum + row.amount, 0)) },
+        { label: "Top Method", value: parsedRows[0]?.paymentMode?.toUpperCase() ?? "-" }
+      ],
+      columns: [
+        { key: "paymentMode", label: "Payment Mode" },
+        { key: "invoices", label: "Invoices" },
+        { key: "amount", label: "Amount" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateDiscountReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .select("DATE(invoice.createdAt)", "date")
+        .addSelect("COALESCE(SUM(invoice.itemDiscountAmount),0)", "itemDiscount")
+        .addSelect("COALESCE(SUM(invoice.couponDiscountAmount),0)", "couponDiscount")
+        .addSelect("COALESCE(SUM(invoice.manualDiscountAmount),0)", "manualDiscount")
+        .addSelect(
+          "COALESCE(SUM(invoice.itemDiscountAmount + invoice.couponDiscountAmount + invoice.manualDiscountAmount),0)",
+          "totalDiscount"
+        )
+        .groupBy("DATE(invoice.createdAt)")
+        .orderBy("DATE(invoice.createdAt)", "ASC"),
+      from,
+      to
+    ).getRawMany<{
+      date: string;
+      itemDiscount: string;
+      couponDiscount: string;
+      manualDiscount: string;
+      totalDiscount: string;
+    }>();
+
+    const parsedRows = rows.map((row) => ({
+      date: row.date,
+      itemDiscount: toMoney(row.itemDiscount),
+      couponDiscount: toMoney(row.couponDiscount),
+      manualDiscount: toMoney(row.manualDiscount),
+      totalDiscount: toMoney(row.totalDiscount)
+    }));
+
+    return {
+      stats: [
+        { label: "Total Discount", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalDiscount, 0)) },
+        { label: "Coupon Discount", value: toMoney(parsedRows.reduce((sum, row) => sum + row.couponDiscount, 0)) },
+        { label: "Manual Discount", value: toMoney(parsedRows.reduce((sum, row) => sum + row.manualDiscount, 0)) }
+      ],
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "itemDiscount", label: "Item Discount" },
+        { key: "couponDiscount", label: "Coupon Discount" },
+        { key: "manualDiscount", label: "Manual Discount" },
+        { key: "totalDiscount", label: "Total Discount" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateCancelledVoidReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.invoiceRepository
+      .createQueryBuilder("invoice")
+      .leftJoinAndSelect("invoice.staff", "staff")
+      .where("invoice.status IN ('cancelled', 'refunded')")
+      .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+      .orderBy("invoice.createdAt", "DESC")
+      .getMany();
+
+    const parsedRows = rows.map((row) => ({
+      invoiceNumber: row.invoiceNumber,
+      status: row.status,
+      orderType: row.orderType,
+      amount: toMoney(row.totalAmount),
+      reason: row.status === "cancelled" ? row.cancelledReason ?? "-" : row.refundedReason ?? "-",
+      staff: row.staff?.fullName ?? "-",
+      createdAt: row.createdAt.toISOString()
+    }));
+
+    return {
+      stats: [
+        { label: "Total Records", value: parsedRows.length },
+        { label: "Cancelled", value: parsedRows.filter((row) => row.status === "cancelled").length },
+        { label: "Refunded", value: parsedRows.filter((row) => row.status === "refunded").length }
+      ],
+      columns: [
+        { key: "invoiceNumber", label: "Invoice" },
+        { key: "status", label: "Status" },
+        { key: "orderType", label: "Order Type" },
+        { key: "amount", label: "Amount" },
+        { key: "reason", label: "Reason" },
+        { key: "staff", label: "Staff" },
+        { key: "createdAt", label: "Created At" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateKotReport(from: Date, to: Date): Promise<ReportPayload> {
+    const [statusRows, recent] = await Promise.all([
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.kitchenStatus != 'not_sent'")
+        .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+        .select("invoice.kitchenStatus", "status")
+        .addSelect("COUNT(invoice.id)", "count")
+        .groupBy("invoice.kitchenStatus")
+        .orderBy("COUNT(invoice.id)", "DESC")
+        .getRawMany<{ status: string; count: string }>(),
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .leftJoinAndSelect("invoice.staff", "staff")
+        .where("invoice.kitchenStatus != 'not_sent'")
+        .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+        .orderBy("invoice.createdAt", "DESC")
+        .take(200)
+        .getMany()
+    ]);
+
+    const parsedRows = recent.map((row) => ({
+      invoiceNumber: row.invoiceNumber,
+      kitchenStatus: row.kitchenStatus,
+      orderType: row.orderType,
+      amount: toMoney(row.totalAmount),
+      staff: row.staff?.fullName ?? "-",
+      createdAt: row.createdAt.toISOString()
+    }));
+
+    return {
+      stats: [
+        { label: "KOT Invoices", value: parsedRows.length },
+        { label: "Queued", value: Number(statusRows.find((row) => row.status === "queued")?.count ?? 0) },
+        {
+          label: "Ready/Served",
+          value: statusRows
+            .filter((row) => ["ready", "served"].includes(row.status))
+            .reduce((sum, row) => sum + Number(row.count ?? 0), 0)
+        }
+      ],
+      columns: [
+        { key: "invoiceNumber", label: "Invoice" },
+        { key: "kitchenStatus", label: "Kitchen Status" },
+        { key: "orderType", label: "Order Type" },
+        { key: "amount", label: "Amount" },
+        { key: "staff", label: "Staff" },
+        { key: "createdAt", label: "Created At" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateCustomerReport(from: Date, to: Date): Promise<ReportPayload> {
+    const invoices = await this.invoiceRepository
+      .createQueryBuilder("invoice")
+      .leftJoinAndSelect("invoice.customer", "customer")
+      .where("invoice.status = 'paid'")
+      .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+      .select([
+        "invoice.id",
+        "invoice.totalAmount",
+        "invoice.createdAt",
+        "invoice.customerSnapshot",
+        "customer.id",
+        "customer.name",
+        "customer.phone"
+      ])
+      .getMany();
+
+    const map = new Map<
+      string,
+      { customerName: string; phone: string; orders: number; totalSpend: number; lastOrderAt: string }
+    >();
+
+    invoices.forEach((invoice) => {
+      const snapshot = (invoice.customerSnapshot ?? {}) as Record<string, unknown>;
+      const customerName =
+        (typeof snapshot.name === "string" ? snapshot.name : null) ??
+        (typeof snapshot.fullName === "string" ? snapshot.fullName : null) ??
+        invoice.customer?.name ??
+        "Walk-in";
+      const phone =
+        (typeof snapshot.phone === "string" ? snapshot.phone : null) ?? invoice.customer?.phone ?? "-";
+      const key = `${customerName}::${phone}`;
+      const existing = map.get(key);
+      const currentTime = invoice.createdAt.toISOString();
+
+      if (!existing) {
+        map.set(key, {
+          customerName,
+          phone,
+          orders: 1,
+          totalSpend: toMoney(invoice.totalAmount),
+          lastOrderAt: currentTime
+        });
+        return;
+      }
+
+      existing.orders += 1;
+      existing.totalSpend = toMoney(existing.totalSpend + toNumber(invoice.totalAmount));
+      if (currentTime > existing.lastOrderAt) {
+        existing.lastOrderAt = currentTime;
+      }
+    });
+
+    const parsedRows = Array.from(map.values()).sort((a, b) => b.totalSpend - a.totalSpend);
+
+    return {
+      stats: [
+        { label: "Customers", value: parsedRows.length },
+        { label: "Total Spend", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalSpend, 0)) },
+        { label: "Walk-in Records", value: parsedRows.filter((row) => row.customerName === "Walk-in").length }
+      ],
+      columns: [
+        { key: "customerName", label: "Customer" },
+        { key: "phone", label: "Phone" },
+        { key: "orders", label: "Orders" },
+        { key: "totalSpend", label: "Total Spend" },
+        { key: "lastOrderAt", label: "Last Order At" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generatePurchaseReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const rows = await this.purchaseRepository
+      .createQueryBuilder("purchase")
+      .leftJoinAndSelect("purchase.supplier", "supplier")
+      .leftJoinAndSelect("purchase.createdByUser", "createdByUser")
+      .where("purchase.purchaseDate >= :fromDate AND purchase.purchaseDate <= :toDate", { fromDate, toDate })
+      .orderBy("purchase.purchaseDate", "DESC")
+      .getMany();
+
+    const parsedRows = rows.map((row) => ({
+      purchaseNumber: row.purchaseNumber,
+      purchaseDate: row.purchaseDate,
+      purchaseType: row.purchaseType,
+      supplier: row.supplier?.name ?? "-",
+      totalAmount: toMoney(row.totalAmount),
+      createdBy: row.createdByUser?.fullName ?? "-"
+    }));
+
+    return {
+      stats: [
+        { label: "Purchase Orders", value: parsedRows.length },
+        { label: "Total Purchase", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalAmount, 0)) },
+        { label: "Suppliers", value: new Set(parsedRows.map((row) => row.supplier)).size }
+      ],
+      columns: [
+        { key: "purchaseNumber", label: "Purchase No" },
+        { key: "purchaseDate", label: "Date" },
+        { key: "purchaseType", label: "Type" },
+        { key: "supplier", label: "Supplier" },
+        { key: "totalAmount", label: "Total Amount" },
+        { key: "createdBy", label: "Created By" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateSupplierWiseReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const rows = await this.purchaseRepository
+      .createQueryBuilder("purchase")
+      .leftJoin(Supplier, "supplier", "supplier.id = purchase.supplierId")
+      .where("purchase.purchaseDate >= :fromDate AND purchase.purchaseDate <= :toDate", { fromDate, toDate })
+      .select("supplier.name", "supplier")
+      .addSelect("COUNT(purchase.id)", "orders")
+      .addSelect("COALESCE(SUM(purchase.totalAmount),0)", "totalAmount")
+      .groupBy("supplier.name")
+      .orderBy("COALESCE(SUM(purchase.totalAmount),0)", "DESC")
+      .getRawMany<{ supplier: string; orders: string; totalAmount: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      supplier: row.supplier ?? "-",
+      orders: Number(row.orders ?? 0),
+      totalAmount: toMoney(row.totalAmount)
+    }));
+
+    return {
+      stats: [
+        { label: "Suppliers", value: parsedRows.length },
+        { label: "Total Purchase", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalAmount, 0)) },
+        { label: "Top Supplier", value: parsedRows[0]?.supplier ?? "-" }
+      ],
+      columns: [
+        { key: "supplier", label: "Supplier" },
+        { key: "orders", label: "Orders" },
+        { key: "totalAmount", label: "Total Amount" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateStockReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const [ingredients, stocks, allocations] = await Promise.all([
+      this.ingredientRepository
+        .createQueryBuilder("ingredient")
+        .leftJoinAndSelect("ingredient.category", "category")
+        .where("ingredient.isActive = true")
+        .orderBy("ingredient.name", "ASC")
+        .getMany(),
+      this.ingredientStockRepository.find(),
+      this.allocationRepository
+        .createQueryBuilder("allocation")
+        .where("allocation.date >= :fromDate AND allocation.date <= :toDate", { fromDate, toDate })
+        .getMany()
+    ]);
+
+    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, stock]));
+    const allocationMap = new Map<
+      string,
+      { allocatedQuantity: number; usedQuantity: number; remainingQuantity: number }
+    >();
+
+    allocations.forEach((allocation) => {
+      const entry = allocationMap.get(allocation.ingredientId) ?? {
+        allocatedQuantity: 0,
+        usedQuantity: 0,
+        remainingQuantity: 0
+      };
+      entry.allocatedQuantity += toNumber(allocation.allocatedQuantity);
+      entry.usedQuantity += toNumber(allocation.usedQuantity);
+      entry.remainingQuantity += toNumber(allocation.remainingQuantity);
+      allocationMap.set(allocation.ingredientId, entry);
+    });
+
+    const rows = ingredients.map((ingredient) => {
+      const stock = stockMap.get(ingredient.id);
+      const allocation = allocationMap.get(ingredient.id);
+      const totalStock = toQty(stock?.totalStock ?? 0);
+      const allocated = toQty(allocation?.allocatedQuantity ?? 0);
+      const used = toQty(allocation?.usedQuantity ?? 0);
+      const remaining = toQty(allocation?.remainingQuantity ?? 0);
+      const minStock = toQty(ingredient.minStock);
+
+      return {
+        ingredient: ingredient.name,
+        category: ingredient.category?.name ?? "-",
+        unit: ingredient.unit,
+        totalStock,
+        allocated,
+        used,
+        remaining,
+        minStock,
+        valuation: toMoney(totalStock * toNumber(ingredient.perUnitPrice)),
+        status: totalStock <= minStock ? "LOW_STOCK" : "HEALTHY"
+      };
+    });
+
+    return {
+      stats: [
+        { label: "Ingredients", value: rows.length },
+        { label: "Low Stock", value: rows.filter((row) => row.status === "LOW_STOCK").length },
+        { label: "Total Valuation", value: toMoney(rows.reduce((sum, row) => sum + row.valuation, 0)) }
+      ],
+      columns: [
+        { key: "ingredient", label: "Ingredient" },
+        { key: "category", label: "Category" },
+        { key: "unit", label: "Unit" },
+        { key: "totalStock", label: "Total Stock" },
+        { key: "allocated", label: "Allocated" },
+        { key: "used", label: "Used" },
+        { key: "remaining", label: "Remaining" },
+        { key: "minStock", label: "Min Stock" },
+        { key: "valuation", label: "Valuation" },
+        { key: "status", label: "Status" }
+      ],
+      rows
+    };
+  }
+
+  private async generateLowStockReport(): Promise<ReportPayload> {
+    const [ingredients, stocks, products] = await Promise.all([
+      this.ingredientRepository
+        .createQueryBuilder("ingredient")
+        .leftJoinAndSelect("ingredient.category", "category")
+        .where("ingredient.isActive = true")
+        .orderBy("ingredient.name", "ASC")
+        .getMany(),
+      this.ingredientStockRepository.find(),
+      this.productRepository
+        .createQueryBuilder("product")
+        .where("product.isActive = true")
+        .orderBy("product.name", "ASC")
+        .getMany()
+    ]);
+
+    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, stock]));
+
+    const ingredientRows = ingredients
+      .map((ingredient) => {
+        const totalStock = toQty(stockMap.get(ingredient.id)?.totalStock ?? 0);
+        const minStock = toQty(ingredient.minStock);
+        return {
+          type: "ingredient",
+          name: ingredient.name,
+          category: ingredient.category?.name ?? "-",
+          unit: ingredient.unit,
+          currentStock: totalStock,
+          minStock,
+          status: totalStock <= minStock ? "LOW_STOCK" : "HEALTHY"
+        };
+      })
+      .filter((row) => row.status === "LOW_STOCK");
+
+    const productRows = products
+      .map((product) => {
+        const currentStock = toQty(product.currentStock);
+        const minStock = toQty(product.minStock);
+        return {
+          type: "product",
+          name: product.name,
+          category: product.category,
+          unit: product.unit,
+          currentStock,
+          minStock,
+          status: currentStock <= minStock ? "LOW_STOCK" : "HEALTHY"
+        };
+      })
+      .filter((row) => row.status === "LOW_STOCK");
+
+    const rows = [...ingredientRows, ...productRows].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+
+    return {
+      stats: [
+        { label: "Total Low Stock", value: rows.length },
+        { label: "Ingredients", value: ingredientRows.length },
+        { label: "Products", value: productRows.length }
+      ],
+      columns: [
+        { key: "type", label: "Type" },
+        { key: "name", label: "Name" },
+        { key: "category", label: "Category" },
+        { key: "unit", label: "Unit" },
+        { key: "currentStock", label: "Current Stock" },
+        { key: "minStock", label: "Min Stock" },
+        { key: "status", label: "Status" }
+      ],
+      rows
+    };
+  }
+
+  private async generateIngredientReport(): Promise<ReportPayload> {
+    const [ingredients, stocks] = await Promise.all([
+      this.ingredientRepository
+        .createQueryBuilder("ingredient")
+        .leftJoinAndSelect("ingredient.category", "category")
+        .where("ingredient.isActive = true")
+        .orderBy("ingredient.name", "ASC")
+        .getMany(),
+      this.ingredientStockRepository.find()
+    ]);
+    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, stock]));
+
+    const rows = ingredients.map((ingredient) => {
+      const totalStock = toQty(stockMap.get(ingredient.id)?.totalStock ?? 0);
+      const perUnitPrice = toMoney(ingredient.perUnitPrice);
+      const valuation = toMoney(totalStock * perUnitPrice);
+
+      return {
+        ingredient: ingredient.name,
+        category: ingredient.category?.name ?? "-",
+        unit: ingredient.unit,
+        perUnitPrice,
+        totalStock,
+        minStock: toQty(ingredient.minStock),
+        valuation,
+        availability: ingredient.isActive ? "ACTIVE" : "INACTIVE"
+      };
+    });
+
+    return {
+      stats: [
+        { label: "Ingredients", value: rows.length },
+        { label: "Valuation", value: toMoney(rows.reduce((sum, row) => sum + row.valuation, 0)) },
+        {
+          label: "Average Price",
+          value: rows.length
+            ? toMoney(rows.reduce((sum, row) => sum + row.perUnitPrice, 0) / rows.length)
+            : 0
+        }
+      ],
+      columns: [
+        { key: "ingredient", label: "Ingredient" },
+        { key: "category", label: "Category" },
+        { key: "unit", label: "Unit" },
+        { key: "perUnitPrice", label: "Per Unit Price" },
+        { key: "totalStock", label: "Total Stock" },
+        { key: "minStock", label: "Min Stock" },
+        { key: "valuation", label: "Valuation" },
+        { key: "availability", label: "Availability" }
+      ],
+      rows
+    };
+  }
+
+  private async generateMenuReport(): Promise<ReportPayload> {
+    const [items, addOns, combos] = await Promise.all([
+      this.itemRepository
+        .createQueryBuilder("item")
+        .leftJoinAndSelect("item.category", "category")
+        .orderBy("item.name", "ASC")
+        .getMany(),
+      this.addOnRepository.createQueryBuilder("addOn").orderBy("addOn.name", "ASC").getMany(),
+      this.comboRepository.createQueryBuilder("combo").orderBy("combo.name", "ASC").getMany()
+    ]);
+
+    const rows: ReportRow[] = [
+      ...items.map((item) => ({
+        type: "item",
+        name: item.name,
+        category: item.category?.name ?? "-",
+        sellingPrice: toMoney(item.sellingPrice),
+        gstPercentage: toPercent(item.gstPercentage),
+        estimatedCost: toMoney(item.estimatedIngredientCost),
+        status: item.isActive ? "ACTIVE" : "INACTIVE"
+      })),
+      ...addOns.map((addOn) => ({
+        type: "add_on",
+        name: addOn.name,
+        category: "Add-on",
+        sellingPrice: toMoney(addOn.sellingPrice),
+        gstPercentage: toPercent(addOn.gstPercentage),
+        estimatedCost: toMoney(addOn.estimatedIngredientCost),
+        status: addOn.isActive ? "ACTIVE" : "INACTIVE"
+      })),
+      ...combos.map((combo) => ({
+        type: "combo",
+        name: combo.name,
+        category: "Combo",
+        sellingPrice: toMoney(combo.sellingPrice),
+        gstPercentage: toPercent(combo.gstPercentage),
+        estimatedCost: null,
+        status: combo.isActive ? "ACTIVE" : "INACTIVE"
+      }))
+    ];
+
+    return {
+      stats: [
+        { label: "Total Menu Records", value: rows.length },
+        { label: "Items", value: items.length },
+        { label: "Active Records", value: rows.filter((row) => row.status === "ACTIVE").length }
+      ],
+      columns: [
+        { key: "type", label: "Type" },
+        { key: "name", label: "Name" },
+        { key: "category", label: "Category" },
+        { key: "sellingPrice", label: "Selling Price" },
+        { key: "gstPercentage", label: "GST %" },
+        { key: "estimatedCost", label: "Estimated Cost" },
+        { key: "status", label: "Status" }
+      ],
+      rows
+    };
+  }
+
+  private async generateStaffAttendanceReport(from: Date, to: Date): Promise<ReportPayload> {
+    const now = new Date();
+    const records = await this.attendanceRepository
+      .createQueryBuilder("attendance")
+      .leftJoinAndSelect("attendance.user", "user")
+      .where("attendance.punchInAt >= :from AND attendance.punchInAt <= :to", { from, to })
+      .orderBy("attendance.punchInAt", "DESC")
+      .getMany();
+
+    const rows = records.map((record) => {
+      const end = record.punchOutAt ?? now;
+      const activeMinutes = minutesBetween(record.punchInAt, end);
+      return {
+        staff: record.user?.fullName ?? "-",
+        username: record.user?.username ?? "-",
+        role: record.user?.role ?? "-",
+        punchInAt: record.punchInAt.toISOString(),
+        punchOutAt: toIso(record.punchOutAt),
+        activeHours: Number((activeMinutes / 60).toFixed(2)),
+        status: record.punchOutAt ? "CLOSED" : "ACTIVE"
+      };
+    });
+
+    const totalHours = rows.reduce((sum, row) => sum + toNumber(row.activeHours), 0);
+    const activeShifts = rows.filter((row) => row.status === "ACTIVE").length;
+
+    return {
+      stats: [
+        { label: "Attendance Records", value: rows.length },
+        { label: "Active Shifts", value: activeShifts },
+        { label: "Worked Hours", value: Number(totalHours.toFixed(2)) }
+      ],
+      columns: [
+        { key: "staff", label: "Staff" },
+        { key: "username", label: "Username" },
+        { key: "role", label: "Role" },
+        { key: "punchInAt", label: "Punch In" },
+        { key: "punchOutAt", label: "Punch Out" },
+        { key: "activeHours", label: "Active Hours" },
+        { key: "status", label: "Status" }
+      ],
+      rows
+    };
+  }
+
+  private async generateStaffLoginReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.attendanceRepository
+      .createQueryBuilder("attendance")
+      .leftJoin("attendance.user", "user")
+      .where("attendance.punchInAt >= :from AND attendance.punchInAt <= :to", { from, to })
+      .select("attendance.userId", "staffId")
+      .addSelect("user.fullName", "staffName")
+      .addSelect("user.username", "username")
+      .addSelect("user.role", "role")
+      .addSelect("COUNT(attendance.id)", "loginCount")
+      .addSelect("MAX(attendance.punchInAt)", "lastLoginAt")
+      .groupBy("attendance.userId")
+      .addGroupBy("user.fullName")
+      .addGroupBy("user.username")
+      .addGroupBy("user.role")
+      .orderBy("MAX(attendance.punchInAt)", "DESC")
+      .getRawMany<{
+        staffId: string;
+        staffName: string;
+        username: string;
+        role: string;
+        loginCount: string;
+        lastLoginAt: string | null;
+      }>();
+
+    const parsedRows = rows.map((row) => ({
+      staffName: row.staffName ?? "-",
+      username: row.username ?? "-",
+      role: row.role ?? "-",
+      loginCount: Number(row.loginCount ?? 0),
+      lastLoginAt: row.lastLoginAt
+    }));
+
+    return {
+      stats: [
+        { label: "Staff Logged In", value: parsedRows.length },
+        { label: "Total Logins", value: parsedRows.reduce((sum, row) => sum + row.loginCount, 0) },
+        { label: "Most Active Staff", value: parsedRows[0]?.staffName ?? "-" }
+      ],
+      columns: [
+        { key: "staffName", label: "Staff" },
+        { key: "username", label: "Username" },
+        { key: "role", label: "Role" },
+        { key: "loginCount", label: "Login Count" },
+        { key: "lastLoginAt", label: "Last Login" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateGstReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .select(`DATE("invoice"."createdAt")`, "date")
+        .addSelect("COUNT(invoice.id)", "invoices")
+        .addSelect("COALESCE(SUM(invoice.subtotal),0)", "taxableAmount")
+        .addSelect("COALESCE(SUM(invoice.taxAmount),0)", "gstAmount")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "grossAmount")
+        .groupBy(`DATE("invoice"."createdAt")`)
+        .orderBy(`DATE("invoice"."createdAt")`, "ASC"),
+      from,
+      to
+    ).getRawMany<{
+      date: string;
+      invoices: string;
+      taxableAmount: string;
+      gstAmount: string;
+      grossAmount: string;
+    }>();
+
+    const parsedRows = rows.map((row) => ({
+      date: row.date,
+      invoices: Number(row.invoices ?? 0),
+      taxableAmount: toMoney(row.taxableAmount),
+      gstAmount: toMoney(row.gstAmount),
+      grossAmount: toMoney(row.grossAmount)
+    }));
+
+    return {
+      stats: [
+        { label: "GST Collected", value: toMoney(parsedRows.reduce((sum, row) => sum + row.gstAmount, 0)) },
+        { label: "Taxable Sales", value: toMoney(parsedRows.reduce((sum, row) => sum + row.taxableAmount, 0)) },
+        { label: "Paid Invoices", value: parsedRows.reduce((sum, row) => sum + row.invoices, 0) }
+      ],
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "invoices", label: "Invoices" },
+        { key: "taxableAmount", label: "Taxable Amount" },
+        { key: "gstAmount", label: "GST Amount" },
+        { key: "grossAmount", label: "Gross Amount" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateExpenseReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const [purchases, refunds] = await Promise.all([
+      this.purchaseRepository
+        .createQueryBuilder("purchase")
+        .where("purchase.purchaseDate >= :fromDate AND purchase.purchaseDate <= :toDate", { fromDate, toDate })
+        .select("purchase.purchaseDate", "date")
+        .addSelect("COUNT(purchase.id)", "purchaseCount")
+        .addSelect("COALESCE(SUM(purchase.totalAmount),0)", "purchaseAmount")
+        .groupBy("purchase.purchaseDate")
+        .orderBy("purchase.purchaseDate", "ASC")
+        .getRawMany<{ date: string; purchaseCount: string; purchaseAmount: string }>(),
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'refunded'")
+        .andWhere("invoice.refundedAt >= :from AND invoice.refundedAt <= :to", { from, to })
+        .select(`DATE("invoice"."refundedAt")`, "date")
+        .addSelect("COUNT(invoice.id)", "refundCount")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "refundAmount")
+        .groupBy(`DATE("invoice"."refundedAt")`)
+        .orderBy(`DATE("invoice"."refundedAt")`, "ASC")
+        .getRawMany<{ date: string; refundCount: string; refundAmount: string }>()
+    ]);
+
+    const map = new Map<
+      string,
+      { date: string; purchaseCount: number; purchaseAmount: number; refundCount: number; refundAmount: number }
+    >();
+
+    purchases.forEach((row) => {
+      map.set(row.date, {
+        date: row.date,
+        purchaseCount: Number(row.purchaseCount ?? 0),
+        purchaseAmount: toMoney(row.purchaseAmount),
+        refundCount: 0,
+        refundAmount: 0
+      });
+    });
+
+    refunds.forEach((row) => {
+      const existing = map.get(row.date) ?? {
+        date: row.date,
+        purchaseCount: 0,
+        purchaseAmount: 0,
+        refundCount: 0,
+        refundAmount: 0
+      };
+      existing.refundCount += Number(row.refundCount ?? 0);
+      existing.refundAmount = toMoney(existing.refundAmount + toNumber(row.refundAmount));
+      map.set(row.date, existing);
+    });
+
+    const rows = Array.from(map.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => ({
+        date: row.date,
+        purchaseCount: row.purchaseCount,
+        purchaseAmount: toMoney(row.purchaseAmount),
+        refundCount: row.refundCount,
+        refundAmount: toMoney(row.refundAmount),
+        netOutflow: toMoney(row.purchaseAmount + row.refundAmount)
+      }));
+
+    return {
+      stats: [
+        { label: "Purchase Expense", value: toMoney(rows.reduce((sum, row) => sum + row.purchaseAmount, 0)) },
+        { label: "Refund Expense", value: toMoney(rows.reduce((sum, row) => sum + row.refundAmount, 0)) },
+        { label: "Net Outflow", value: toMoney(rows.reduce((sum, row) => sum + row.netOutflow, 0)) }
+      ],
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "purchaseCount", label: "Purchase Count" },
+        { key: "purchaseAmount", label: "Purchase Amount" },
+        { key: "refundCount", label: "Refund Count" },
+        { key: "refundAmount", label: "Refund Amount" },
+        { key: "netOutflow", label: "Net Outflow" }
+      ],
+      rows
+    };
+  }
+
+  private async generateOrderTypeReport(
+    from: Date,
+    to: Date,
+    orderType: "delivery" | "dine_in",
+    title: string
+  ): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .andWhere("invoice.orderType = :orderType", { orderType })
+        .select(`DATE("invoice"."createdAt")`, "date")
+        .addSelect("COUNT(invoice.id)", "orders")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "sales")
+        .addSelect("COALESCE(SUM(invoice.taxAmount),0)", "tax")
+        .groupBy(`DATE("invoice"."createdAt")`)
+        .orderBy(`DATE("invoice"."createdAt")`, "ASC"),
+      from,
+      to
+    ).getRawMany<{ date: string; orders: string; sales: string; tax: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      date: row.date,
+      orders: Number(row.orders ?? 0),
+      sales: toMoney(row.sales),
+      tax: toMoney(row.tax),
+      averageOrderValue: Number(row.orders ?? 0) ? toMoney(toNumber(row.sales) / toNumber(row.orders)) : 0
+    }));
+
+    return {
+      stats: [
+        { label: `${title} Orders`, value: parsedRows.reduce((sum, row) => sum + row.orders, 0) },
+        { label: `${title} Sales`, value: toMoney(parsedRows.reduce((sum, row) => sum + row.sales, 0)) },
+        {
+          label: `${title} AOV`,
+          value: (() => {
+            const totalOrders = parsedRows.reduce((sum, row) => sum + row.orders, 0);
+            const totalSales = parsedRows.reduce((sum, row) => sum + row.sales, 0);
+            return totalOrders ? toMoney(totalSales / totalOrders) : 0;
+          })()
+        }
+      ],
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "orders", label: "Orders" },
+        { key: "sales", label: "Sales" },
+        { key: "tax", label: "Tax" },
+        { key: "averageOrderValue", label: "Avg Order Value" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateOnlineReport(from: Date, to: Date): Promise<ReportPayload> {
+    const invoices = await this.invoiceRepository
+      .createQueryBuilder("invoice")
+      .where("invoice.status = 'paid'")
+      .andWhere("invoice.orderType = 'delivery'")
+      .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+      .orderBy("invoice.createdAt", "DESC")
+      .getMany();
+
+    const resolveChannel = (invoice: Invoice) => {
+      const source = `${invoice.notes ?? ""} ${invoice.orderReference ?? ""} ${invoice.couponCode ?? ""}`.toLowerCase();
+      if (source.includes("swiggy")) {
+        return "swiggy";
+      }
+      if (source.includes("zomato")) {
+        return "zomato";
+      }
+      return "delivery";
+    };
+
+    const rows = invoices.map((invoice) => ({
+      invoiceNumber: invoice.invoiceNumber,
+      channel: resolveChannel(invoice),
+      customer: ((invoice.customerSnapshot ?? {}) as Record<string, unknown>).name as string | undefined ?? "Walk-in",
+      amount: toMoney(invoice.totalAmount),
+      tax: toMoney(invoice.taxAmount),
+      createdAt: invoice.createdAt.toISOString()
+    }));
+
+    return {
+      stats: [
+        { label: "Online Orders", value: rows.length },
+        { label: "Online Sales", value: toMoney(rows.reduce((sum, row) => sum + row.amount, 0)) },
+        { label: "Channels", value: new Set(rows.map((row) => row.channel)).size }
+      ],
+      columns: [
+        { key: "invoiceNumber", label: "Invoice" },
+        { key: "channel", label: "Channel" },
+        { key: "customer", label: "Customer" },
+        { key: "amount", label: "Amount" },
+        { key: "tax", label: "Tax" },
+        { key: "createdAt", label: "Created At" }
+      ],
+      rows
+    };
+  }
+
+  private async generateComboReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.invoiceLineRepository
+      .createQueryBuilder("line")
+      .leftJoin(Invoice, "invoice", "invoice.id = line.invoiceId")
+      .where("invoice.status = 'paid'")
+      .andWhere("line.lineType = 'combo'")
+      .andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to })
+      .select("line.nameSnapshot", "comboName")
+      .addSelect("COALESCE(SUM(line.quantity),0)", "quantity")
+      .addSelect("COALESCE(SUM(line.lineTotal),0)", "totalSales")
+      .groupBy("line.nameSnapshot")
+      .orderBy("COALESCE(SUM(line.lineTotal),0)", "DESC")
+      .getRawMany<{ comboName: string; quantity: string; totalSales: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      comboName: row.comboName,
+      quantity: toQty(row.quantity),
+      totalSales: toMoney(row.totalSales)
+    }));
+
+    return {
+      stats: [
+        { label: "Combos Sold", value: toQty(parsedRows.reduce((sum, row) => sum + row.quantity, 0)) },
+        { label: "Combo Revenue", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalSales, 0)) },
+        { label: "Top Combo", value: parsedRows[0]?.comboName ?? "-" }
+      ],
+      columns: [
+        { key: "comboName", label: "Combo" },
+        { key: "quantity", label: "Quantity" },
+        { key: "totalSales", label: "Sales" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generatePeakSalesTimeReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.applyDateFilter(
+      this.invoiceRepository
+        .createQueryBuilder("invoice")
+        .where("invoice.status = 'paid'")
+        .select(`EXTRACT(HOUR FROM "invoice"."createdAt")`, "hour")
+        .addSelect("COUNT(invoice.id)", "orders")
+        .addSelect("COALESCE(SUM(invoice.totalAmount),0)", "sales")
+        .groupBy(`EXTRACT(HOUR FROM "invoice"."createdAt")`)
+        .orderBy(`EXTRACT(HOUR FROM "invoice"."createdAt")`, "ASC"),
+      from,
+      to
+    ).getRawMany<{ hour: string; orders: string; sales: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      hour: Number(row.hour ?? 0),
+      orders: Number(row.orders ?? 0),
+      sales: toMoney(row.sales),
+      label: `${String(Number(row.hour ?? 0)).padStart(2, "0")}:00`
+    }));
+
+    const top = [...parsedRows].sort((a, b) => b.sales - a.sales)[0];
+
+    return {
+      stats: [
+        { label: "Busiest Hour", value: top ? `${top.label} (${top.orders} orders)` : "-" },
+        { label: "Peak Sales", value: top ? top.sales : 0 },
+        { label: "Total Hour Buckets", value: parsedRows.length }
+      ],
+      columns: [
+        { key: "label", label: "Hour" },
+        { key: "orders", label: "Orders" },
+        { key: "sales", label: "Sales" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateStockConsumptionReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const rows = await this.usageRepository
+      .createQueryBuilder("usage")
+      .where("usage.usageDate >= :fromDate AND usage.usageDate <= :toDate", { fromDate, toDate })
+      .select("usage.ingredientNameSnapshot", "ingredient")
+      .addSelect("usage.baseUnit", "unit")
+      .addSelect("COALESCE(SUM(usage.consumedQuantity),0)", "consumed")
+      .addSelect("COALESCE(SUM(usage.allocatedQuantity),0)", "allocated")
+      .addSelect("COALESCE(SUM(usage.overusedQuantity),0)", "overused")
+      .groupBy("usage.ingredientNameSnapshot")
+      .addGroupBy("usage.baseUnit")
+      .orderBy("COALESCE(SUM(usage.consumedQuantity),0)", "DESC")
+      .getRawMany<{ ingredient: string; unit: string; consumed: string; allocated: string; overused: string }>();
+
+    const parsedRows = rows.map((row) => ({
+      ingredient: row.ingredient,
+      unit: row.unit,
+      consumed: toQty(row.consumed),
+      allocated: toQty(row.allocated),
+      overused: toQty(row.overused),
+      remaining: toQty(toNumber(row.allocated) - toNumber(row.consumed)),
+      status: toNumber(row.overused) > 0 ? "OVERUSED" : "WITHIN_ALLOCATION"
+    }));
+
+    return {
+      stats: [
+        { label: "Ingredients Used", value: parsedRows.length },
+        { label: "Overused Ingredients", value: parsedRows.filter((row) => row.status === "OVERUSED").length },
+        { label: "Total Overused Qty", value: toQty(parsedRows.reduce((sum, row) => sum + row.overused, 0)) }
+      ],
+      columns: [
+        { key: "ingredient", label: "Ingredient" },
+        { key: "unit", label: "Unit" },
+        { key: "allocated", label: "Allocated" },
+        { key: "consumed", label: "Consumed" },
+        { key: "overused", label: "Overused" },
+        { key: "remaining", label: "Remaining" },
+        { key: "status", label: "Status" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateGamingReport(from: Date, to: Date): Promise<ReportPayload> {
+    const rows = await this.gamingRepository
+      .createQueryBuilder("booking")
+      .leftJoinAndSelect("booking.staff", "staff")
+      .where("booking.createdAt >= :from AND booking.createdAt <= :to", { from, to })
+      .orderBy("booking.createdAt", "DESC")
+      .getMany();
+
+    const parsedRows = rows.map((row) => ({
+      bookingNumber: row.bookingNumber,
+      bookingType: row.bookingType,
+      resource: row.resourceCodes?.length ? row.resourceCodes.join(", ") : row.resourceLabel,
+      players: row.customerGroup?.length || 0,
+      status: row.status,
+      paymentStatus: row.paymentStatus,
+      paymentMode: row.paymentMode ?? "-",
+      hourlyRate: toMoney(row.hourlyRate),
+      finalAmount: toMoney(row.finalAmount),
+      foodAndBeverageAmount: toMoney(row.foodAndBeverageAmount),
+      totalAmount: toMoney(toNumber(row.finalAmount) + toNumber(row.foodAndBeverageAmount)),
+      staff: row.staff?.fullName ?? "-",
+      checkInAt: row.checkInAt.toISOString(),
+      checkOutAt: toIso(row.checkOutAt),
+      createdAt: row.createdAt.toISOString()
+    }));
+
+    return {
+      stats: [
+        { label: "Sessions", value: parsedRows.length },
+        { label: "Playing Now", value: parsedRows.filter((row) => row.status === "ongoing").length },
+        { label: "Gaming Revenue", value: toMoney(parsedRows.reduce((sum, row) => sum + row.totalAmount, 0)) }
+      ],
+      columns: [
+        { key: "bookingNumber", label: "Booking" },
+        { key: "bookingType", label: "Type" },
+        { key: "resource", label: "Resource" },
+        { key: "players", label: "Players" },
+        { key: "status", label: "Status" },
+        { key: "paymentStatus", label: "Payment Status" },
+        { key: "paymentMode", label: "Payment Mode" },
+        { key: "hourlyRate", label: "Rate / Hour" },
+        { key: "finalAmount", label: "Session Amount" },
+        { key: "foodAndBeverageAmount", label: "F&B Amount" },
+        { key: "totalAmount", label: "Total" },
+        { key: "staff", label: "Staff" },
+        { key: "checkInAt", label: "Check In" },
+        { key: "checkOutAt", label: "Check Out" },
+        { key: "createdAt", label: "Created At" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async generateCashAuditReport(from: Date, to: Date): Promise<ReportPayload> {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+
+    const rows = await this.cashAuditRepository
+      .createQueryBuilder("audit")
+      .leftJoinAndSelect("audit.createdByUser", "createdByUser")
+      .leftJoinAndSelect("audit.approvedByAdmin", "approvedByAdmin")
+      .where("audit.auditDate >= :fromDate AND audit.auditDate <= :toDate", { fromDate, toDate })
+      .orderBy("audit.auditDate", "ASC")
+      .addOrderBy("audit.createdAt", "ASC")
+      .getMany();
+
+    let previousCounted = 0;
+    const parsedRows = rows.map((row) => {
+      const countedAmount = toMoney(row.countedAmount);
+      const varianceFromPrevious = toMoney(countedAmount - previousCounted);
+      previousCounted = countedAmount;
+      const staffCashTaken = toMoney(row.staffCashTakenAmount);
+
+      return {
+        auditDate: row.auditDate,
+        countedAmount,
+        staffCashTaken,
+        closingCashAfterStaff: toMoney(countedAmount - staffCashTaken),
+        varianceFromPrevious,
+        createdBy: row.createdByUser?.fullName ?? "-",
+        approvedBy: row.approvedByAdmin?.fullName ?? "-",
+        createdAt: row.createdAt.toISOString()
+      };
+    });
+
+    return {
+      stats: [
+        { label: "Audit Entries", value: parsedRows.length },
+        { label: "Total Counted", value: toMoney(parsedRows.reduce((sum, row) => sum + row.countedAmount, 0)) },
+        {
+          label: "Staff Cash Taken",
+          value: toMoney(parsedRows.reduce((sum, row) => sum + row.staffCashTaken, 0))
+        }
+      ],
+      columns: [
+        { key: "auditDate", label: "Audit Date" },
+        { key: "countedAmount", label: "Counted Amount" },
+        { key: "staffCashTaken", label: "Staff Cash Taken" },
+        { key: "closingCashAfterStaff", label: "Closing Cash" },
+        { key: "varianceFromPrevious", label: "Variance vs Previous" },
+        { key: "createdBy", label: "Created By" },
+        { key: "approvedBy", label: "Approved By" },
+        { key: "createdAt", label: "Created At" }
+      ],
+      rows: parsedRows
+    };
+  }
+
+  private async dispatchGenerateReport(reportKey: ReportKey, from: Date, to: Date): Promise<ReportPayload> {
+    switch (reportKey) {
+      case "daily_sales_report":
+        return this.generateDailySalesReport(from, to);
+      case "product_wise_sales_report":
+        return this.generateProductWiseSalesReport(from, to);
+      case "payment_method_report":
+        return this.generatePaymentMethodReport(from, to);
+      case "discount_report":
+        return this.generateDiscountReport(from, to);
+      case "cancelled_void_report":
+        return this.generateCancelledVoidReport(from, to);
+      case "kot_report":
+        return this.generateKotReport(from, to);
+      case "customer_report":
+        return this.generateCustomerReport(from, to);
+      case "purchase_report":
+        return this.generatePurchaseReport(from, to);
+      case "supplier_wise_report":
+        return this.generateSupplierWiseReport(from, to);
+      case "stock_report":
+        return this.generateStockReport(from, to);
+      case "low_stock_report":
+        return this.generateLowStockReport();
+      case "ingredient_report":
+        return this.generateIngredientReport();
+      case "menu_report":
+        return this.generateMenuReport();
+      case "staff_attendance_report":
+        return this.generateStaffAttendanceReport(from, to);
+      case "staff_login_report":
+        return this.generateStaffLoginReport(from, to);
+      case "gst_report":
+        return this.generateGstReport(from, to);
+      case "expense_report":
+        return this.generateExpenseReport(from, to);
+      case "delivery_report":
+        return this.generateOrderTypeReport(from, to, "delivery", "Delivery");
+      case "dine_in_report":
+        return this.generateOrderTypeReport(from, to, "dine_in", "Dine-in");
+      case "online_report":
+        return this.generateOnlineReport(from, to);
+      case "combo_report":
+        return this.generateComboReport(from, to);
+      case "peak_sales_time_report":
+        return this.generatePeakSalesTimeReport(from, to);
+      case "stock_consumption_report":
+        return this.generateStockConsumptionReport(from, to);
+      case "gaming_report":
+        return this.generateGamingReport(from, to);
+      case "cash_audit_report":
+        return this.generateCashAuditReport(from, to);
+      default:
+        return {
+          stats: [{ label: "Rows", value: 0 }],
+          columns: [{ key: "message", label: "Message" }],
+          rows: [{ message: `Report generator not available for ${reportKey}` }]
+        };
+    }
+  }
+}

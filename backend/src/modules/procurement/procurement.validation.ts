@@ -17,7 +17,7 @@ export const supplierListSchema = z.object({
     search: z.string().trim().optional(),
     includeInactive: z.coerce.boolean().optional(),
     page: z.coerce.number().int().min(1).default(1),
-    limit: z.coerce.number().int().min(1).max(100).default(10)
+    limit: z.coerce.number().int().min(1).max(200).default(10)
   })
 });
 
@@ -58,7 +58,7 @@ export const productListSchema = z.object({
     supplierId: z.string().uuid("Invalid supplier id").optional(),
     includeInactive: z.coerce.boolean().optional(),
     page: z.coerce.number().int().min(1).default(1),
-    limit: z.coerce.number().int().min(1).max(100).default(10)
+    limit: z.coerce.number().int().min(1).max(200).default(10)
   })
 });
 
@@ -130,6 +130,7 @@ export const createPurchaseOrderSchema = z.object({
     supplierId: z.string().uuid("Invalid supplier id"),
     purchaseDate: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
     note: z.string().trim().max(500).optional(),
+    invoiceImageUrl: z.string().trim().max(600, "Invoice image URL is too long").optional(),
     lines: z.array(purchaseLineSchema).min(1, "At least one purchase line is required")
   })
 });
@@ -142,7 +143,7 @@ export const purchaseOrderListSchema = z.object({
     dateFrom: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
     dateTo: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
     page: z.coerce.number().int().min(1).default(1),
-    limit: z.coerce.number().int().min(1).max(100).default(10)
+    limit: z.coerce.number().int().min(1).max(200).default(10)
   })
 });
 

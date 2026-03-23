@@ -90,6 +90,9 @@ export const SnookerDashboardPage = () => {
                   {booking.primaryCustomerName} ({booking.primaryCustomerPhone})
                 </Text>
                 <Text mt={1} fontSize="sm" color="#6D584E">
+                  Players: {booking.playerCount}
+                </Text>
+                <Text mt={1} fontSize="sm" color="#6D584E">
                   Live: {formatINR(gamingBookingsService.getLiveAmount(booking))}
                 </Text>
               </Box>
@@ -113,6 +116,9 @@ export const SnookerDashboardPage = () => {
                 </HStack>
                 <Text mt={1} color="#4A332A">
                   {booking.primaryCustomerName} ({booking.primaryCustomerPhone})
+                </Text>
+                <Text mt={1} fontSize="sm" color="#6D584E">
+                  Players: {booking.playerCount}
                 </Text>
               </Box>
             ))}

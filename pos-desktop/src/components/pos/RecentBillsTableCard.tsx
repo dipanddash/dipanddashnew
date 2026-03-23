@@ -2,17 +2,12 @@ import {
   Box,
   Button,
   HStack,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack
 } from "@chakra-ui/react";
 import { FiPlay, FiPlus } from "react-icons/fi";
 
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import { formatINR } from "@/utils/currency";
 import type { PendingBillSummary } from "@/types/pos";
 
@@ -47,6 +42,97 @@ export const RecentBillsTableCard = ({
     return { bg: "gray.100", color: "gray.700", label: "Not Sent" };
   };
 
+  const columns: PosTableColumn<PendingBillSummary>[] = [
+    {
+      key: "invoiceNumber",
+      header: "Invoice",
+      render: (bill) => <Text fontWeight={700}>{bill.invoiceNumber}</Text>
+    },
+    {
+      key: "customer",
+      header: "Customer",
+      render: (bill) => (
+        <VStack align="start" spacing={0}>
+          <Text>{bill.customerName}</Text>
+          <Text fontSize="xs" color="#7A6258">
+            {bill.customerPhone}
+          </Text>
+        </VStack>
+      )
+    },
+    {
+      key: "orderType",
+      header: "Order Type",
+      render: (bill) => <Text textTransform="capitalize">{toLabel(bill.orderType, "takeaway")}</Text>
+    },
+    {
+      key: "kitchenStatus",
+      header: "Kitchen",
+      render: (bill) => {
+        const badge = getKitchenBadgeStyles(bill.kitchenStatus);
+        return (
+          <Box
+            px={2.5}
+            py={1}
+            borderRadius="full"
+            fontSize="xs"
+            fontWeight={700}
+            bg={badge.bg}
+            color={badge.color}
+            w="fit-content"
+            textTransform="capitalize"
+          >
+            {badge.label}
+          </Box>
+        );
+      }
+    },
+    {
+      key: "totalAmount",
+      header: "Total",
+      isNumeric: true,
+      render: (bill) => <Text fontWeight={700}>{formatINR(bill.totalAmount)}</Text>
+    },
+    {
+      key: "resume",
+      header: "Resume",
+      alwaysVisible: true,
+      render: (bill) => (
+        <Button
+          size="xs"
+          variant="outline"
+          leftIcon={<FiPlay />}
+          onClick={(event) => {
+            event.stopPropagation();
+            onResume(bill.localOrderId);
+          }}
+        >
+          Resume
+        </Button>
+      )
+    },
+    {
+      key: "tableLabel",
+      header: "Table",
+      render: (bill) => bill.tableLabel ?? "-"
+    },
+    {
+      key: "lineCount",
+      header: "Items",
+      isNumeric: true,
+      render: (bill) => <Text fontWeight={700}>{bill.lineCount}</Text>
+    },
+    {
+      key: "updatedAt",
+      header: "Updated",
+      render: (bill) => (
+        <Text fontSize="xs" color="#7A6258">
+          {new Date(bill.updatedAt).toLocaleString()}
+        </Text>
+      )
+    }
+  ];
+
   return (
     <VStack
       align="stretch"
@@ -74,89 +160,14 @@ export const RecentBillsTableCard = ({
       </HStack>
 
       {bills.length ? (
-        <Box border="1px solid" borderColor="rgba(132, 79, 52, 0.2)" borderRadius="12px" overflow="hidden">
-          <Table size="sm" variant="simple">
-            <Thead bg="rgba(247, 238, 229, 0.9)">
-              <Tr>
-                <Th>Invoice</Th>
-                <Th>Customer</Th>
-                <Th>Order Type</Th>
-                <Th>Kitchen</Th>
-                <Th>Table</Th>
-                <Th isNumeric>Items</Th>
-                <Th isNumeric>Total</Th>
-                <Th>Updated</Th>
-                <Th>Resume</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {bills.map((bill) => {
-                return (
-                  <Tr
-                    key={bill.localOrderId}
-                    cursor="pointer"
-                    _hover={{ bg: "rgba(247, 238, 229, 0.45)" }}
-                    onClick={() => onResume(bill.localOrderId)}
-                  >
-                    <Td fontWeight={700}>{bill.invoiceNumber}</Td>
-                    <Td>
-                      <VStack align="start" spacing={0}>
-                        <Text>{bill.customerName}</Text>
-                        <Text fontSize="xs" color="#7A6258">
-                          {bill.customerPhone}
-                        </Text>
-                      </VStack>
-                    </Td>
-                    <Td textTransform="capitalize">{toLabel(bill.orderType, "takeaway")}</Td>
-                    <Td>
-                      {(() => {
-                        const badge = getKitchenBadgeStyles(bill.kitchenStatus);
-                        return (
-                          <Box
-                            px={2.5}
-                            py={1}
-                            borderRadius="full"
-                            fontSize="xs"
-                            fontWeight={700}
-                            bg={badge.bg}
-                            color={badge.color}
-                            w="fit-content"
-                            textTransform="capitalize"
-                          >
-                            {badge.label}
-                          </Box>
-                        );
-                      })()}
-                    </Td>
-                    <Td>{bill.tableLabel ?? "-"}</Td>
-                    <Td isNumeric fontWeight={700}>
-                      {bill.lineCount}
-                    </Td>
-                    <Td isNumeric fontWeight={700}>
-                      {formatINR(bill.totalAmount)}
-                    </Td>
-                    <Td fontSize="xs" color="#7A6258">
-                      {new Date(bill.updatedAt).toLocaleString()}
-                    </Td>
-                    <Td>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        leftIcon={<FiPlay />}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onResume(bill.localOrderId);
-                        }}
-                      >
-                        Resume
-                      </Button>
-                    </Td>
-                  </Tr>
-                );
-              })}
-            </Tbody>
-          </Table>
-        </Box>
+        <PosDataTable
+          rows={bills}
+          columns={columns}
+          getRowId={(bill) => bill.localOrderId}
+          emptyMessage="No pending orders. Start with a new order."
+          maxColumns={6}
+          onRowClick={(bill) => onResume(bill.localOrderId)}
+        />
       ) : (
         <Box
           p={5}

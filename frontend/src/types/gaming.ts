@@ -16,6 +16,8 @@ export type GamingBookingRow = {
   bookingType: GamingBookingType;
   resourceCode: string;
   resourceLabel: string;
+  resourceCodes?: string[];
+  resourceLabels?: string[];
   customers: Array<{ name: string; phone: string }>;
   customerCount: number;
   primaryCustomerName: string;

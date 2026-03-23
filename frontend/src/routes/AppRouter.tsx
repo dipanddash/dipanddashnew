@@ -37,6 +37,9 @@ const GamingPage = lazy(() =>
 const StockAuditPage = lazy(() =>
   import("@/pages/StockAuditPage").then((module) => ({ default: module.StockAuditPage }))
 );
+const CashAuditPage = lazy(() =>
+  import("@/pages/CashAuditPage").then((module) => ({ default: module.CashAuditPage }))
+);
 const AdminOrdersPage = lazy(() =>
   import("@/pages/AdminOrdersPage").then((module) => ({ default: module.AdminOrdersPage }))
 );
@@ -52,6 +55,9 @@ const SuppliersPage = lazy(() =>
 const PurchasePage = lazy(() =>
   import("@/pages/PurchasePage").then((module) => ({ default: module.PurchasePage }))
 );
+const ReportsPage = lazy(() =>
+  import("@/pages/ReportsPage").then((module) => ({ default: module.ReportsPage }))
+);
 const ProfilePage = lazy(() => import("@/pages/ProfilePage").then((module) => ({ default: module.ProfilePage })));
 const ModulePlaceholderPage = lazy(() =>
   import("@/pages/ModulePlaceholderPage").then((module) => ({ default: module.ModulePlaceholderPage }))
@@ -66,7 +72,6 @@ const Suspended = ({ children }: { children: ReactNode }) => (
 
 export const AppRouter = () => {
   const placeholderPaths = [
-    "/reports",
     "/assets-entry"
   ];
 
@@ -175,6 +180,14 @@ export const AppRouter = () => {
               }
             />
             <Route
+              path={APP_ROUTES.REPORTS}
+              element={
+                <Suspended>
+                  <ReportsPage />
+                </Suspended>
+              }
+            />
+            <Route
               path={APP_ROUTES.INVOICES}
               element={
                 <Suspended>
@@ -187,6 +200,14 @@ export const AppRouter = () => {
               element={
                 <Suspended>
                   <StockAuditPage />
+                </Suspended>
+              }
+            />
+            <Route
+              path={APP_ROUTES.CASH_AUDIT}
+              element={
+                <Suspended>
+                  <CashAuditPage />
                 </Suspended>
               }
             />

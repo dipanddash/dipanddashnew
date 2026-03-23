@@ -7,20 +7,15 @@ import {
   Input,
   Select,
   SimpleGrid,
-  Table,
-  Tbody,
-  Td,
   Text,
   Textarea,
-  Th,
-  Thead,
-  Tr,
   VStack,
   useToast
 } from "@chakra-ui/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { usePos } from "@/app/PosContext";
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import { closingService } from "@/services/closing.service";
 import type { ClosingReportSummary } from "@/types/pos";
 import { extractApiErrorMessage } from "@/utils/api-error";
@@ -102,6 +97,78 @@ export const StaffClosingPage = () => {
     const offset = (draftPage - 1) * draftLimit;
     return filteredDraftRows.slice(offset, offset + draftLimit);
   }, [draftLimit, draftPage, filteredDraftRows]);
+
+  const draftColumns = useMemo<PosTableColumn<(typeof pagedDraftRows)[number]>[]>(
+    () => [
+      {
+        key: "ingredient",
+        header: "Ingredient",
+        render: (row) => (
+          <Box>
+            <Text fontWeight={700}>{row.ingredientName}</Text>
+            <Text fontSize="xs" color="#6D584E">
+              {row.categoryName}
+            </Text>
+          </Box>
+        )
+      },
+      {
+        key: "opening",
+        header: "Opening Stock",
+        render: (row) => formatQuantityWithUnit(row.allocatedQuantity, row.unit)
+      },
+      {
+        key: "used",
+        header: "Used",
+        render: (row) => formatQuantityWithUnit(row.usedQuantity, row.unit)
+      },
+      {
+        key: "closing",
+        header: "Closing Stock",
+        render: (row) => (
+          <HStack spacing={2} minW="180px">
+            <Input
+              size="sm"
+              type="number"
+              min={0}
+              value={draftValues[row.ingredientId] ?? ""}
+              onChange={(event) =>
+                setDraftValues((previous) => ({
+                  ...previous,
+                  [row.ingredientId]: event.target.value
+                }))
+              }
+            />
+            <Text fontSize="xs" color="#6D584E" whiteSpace="nowrap">
+              {row.unit.toLowerCase()}
+            </Text>
+          </HStack>
+        )
+      }
+    ],
+    [draftValues]
+  );
+
+  const historyColumns = useMemo<PosTableColumn<ClosingReportSummary>[]>(
+    () => [
+      {
+        key: "reportDate",
+        header: "Submitted Date",
+        render: (row) => row.reportDate
+      },
+      {
+        key: "submittedAt",
+        header: "Submitted Time",
+        render: (row) => new Date(row.submittedAt).toLocaleTimeString("en-IN")
+      },
+      {
+        key: "note",
+        header: "Note",
+        render: (row) => row.note?.trim() || "-"
+      }
+    ],
+    []
+  );
 
   const handleSubmit = async () => {
     if (!closingStatus?.pendingCloseDate || !closingStatus?.draft.rows.length) {
@@ -254,58 +321,13 @@ export const StaffClosingPage = () => {
           </Box>
         ) : null}
 
-        <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflow="hidden">
-          <Table variant="simple" size="sm">
-            <Thead bg="#FFF8EE">
-              <Tr>
-                <Th>Ingredient</Th>
-                <Th>Opening Stock</Th>
-                <Th>Used</Th>
-                <Th>Closing Stock</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {pagedDraftRows.map((row) => (
-                <Tr key={row.ingredientId}>
-                  <Td>
-                    <Text fontWeight={700}>{row.ingredientName}</Text>
-                    <Text fontSize="xs" color="#6D584E">
-                      {row.categoryName}
-                    </Text>
-                  </Td>
-                  <Td>{formatQuantityWithUnit(row.allocatedQuantity, row.unit)}</Td>
-                  <Td>{formatQuantityWithUnit(row.usedQuantity, row.unit)}</Td>
-                  <Td minW="180px">
-                    <HStack spacing={2}>
-                      <Input
-                        size="sm"
-                        type="number"
-                        min={0}
-                        value={draftValues[row.ingredientId] ?? ""}
-                        onChange={(event) =>
-                          setDraftValues((previous) => ({
-                            ...previous,
-                            [row.ingredientId]: event.target.value
-                          }))
-                        }
-                      />
-                      <Text fontSize="xs" color="#6D584E" whiteSpace="nowrap">
-                        {row.unit.toLowerCase()}
-                      </Text>
-                    </HStack>
-                  </Td>
-                </Tr>
-              ))}
-              {!filteredDraftRows.length ? (
-                <Tr>
-                  <Td colSpan={4}>
-                    <Text color="#6D584E">No draft rows available for closing.</Text>
-                  </Td>
-                </Tr>
-              ) : null}
-            </Tbody>
-          </Table>
-        </Box>
+        <PosDataTable
+          rows={pagedDraftRows}
+          columns={draftColumns}
+          getRowId={(row) => row.ingredientId}
+          emptyMessage="No draft rows available for closing."
+          maxColumns={6}
+        />
         <HStack justify="space-between" mt={3} flexWrap="wrap" gap={2}>
           <Text fontSize="sm" color="#6D584E">
             Showing {pagedDraftRows.length} of {filteredDraftRows.length} ingredients
@@ -390,33 +412,15 @@ export const StaffClosingPage = () => {
             </Select>
           </FormControl>
         </HStack>
-        <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflow="hidden">
-          <Table variant="simple" size="sm">
-            <Thead bg="#FFF8EE">
-              <Tr>
-                <Th>Submitted Date</Th>
-                <Th>Submitted Time</Th>
-                <Th>Note</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {historyRows.map((row) => (
-                <Tr key={row.id}>
-                  <Td>{row.reportDate}</Td>
-                  <Td>{new Date(row.submittedAt).toLocaleTimeString("en-IN")}</Td>
-                  <Td>{row.note?.trim() || "-"}</Td>
-                </Tr>
-              ))}
-              {!historyRows.length ? (
-                <Tr>
-                  <Td colSpan={3}>
-                    <Text color="#6D584E">{isLoading ? "Loading..." : "No closing reports available."}</Text>
-                  </Td>
-                </Tr>
-              ) : null}
-            </Tbody>
-          </Table>
-        </Box>
+        <PosDataTable
+          rows={historyRows}
+          columns={historyColumns}
+          getRowId={(row) => row.id}
+          loading={isLoading}
+          loadingMessage="Loading..."
+          emptyMessage="No closing reports available."
+          maxColumns={6}
+        />
         <HStack justify="flex-end" mt={3}>
           <Button
             size="sm"

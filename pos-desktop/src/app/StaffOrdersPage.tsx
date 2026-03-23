@@ -14,13 +14,7 @@ import {
   ModalHeader,
   ModalOverlay,
   Select,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
   useDisclosure,
   useToast
@@ -29,6 +23,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { usePosAuth } from "@/app/PosAuthContext";
 import { usePos } from "@/app/PosContext";
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import type { PosOrder } from "@/types/pos";
 import logo from "@/assets/logo.png";
 import {
@@ -164,6 +159,64 @@ export const StaffOrdersPage = () => {
 
   const displayPage = Math.min(page, totalPages);
 
+  const columns = useMemo<PosTableColumn<(typeof pagedBills)[number]>[]>(
+    () => [
+      {
+        key: "invoiceNumber",
+        header: "Invoice",
+        render: (bill) => <Text fontWeight={700}>{bill.invoiceNumber}</Text>
+      },
+      {
+        key: "customer",
+        header: "Customer",
+        render: (bill) => (
+          <VStack align="start" spacing={0}>
+            <Text>{bill.customerName}</Text>
+            <Text fontSize="xs" color="#7A6258">
+              {bill.customerPhone}
+            </Text>
+          </VStack>
+        )
+      },
+      {
+        key: "orderType",
+        header: "Order Type",
+        render: (bill) => <Text textTransform="capitalize">{toOrderTypeLabel(bill.orderType)}</Text>
+      },
+      {
+        key: "totalAmount",
+        header: "Total",
+        isNumeric: true,
+        render: (bill) => <Text fontWeight={700}>{formatRs(bill.totalAmount)}</Text>
+      },
+      {
+        key: "updatedAt",
+        header: "Updated",
+        render: (bill) => (
+          <Text fontSize="xs" color="#7A6258">
+            {new Date(bill.updatedAt).toLocaleString()}
+          </Text>
+        )
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        alwaysVisible: true,
+        render: (bill) => (
+          <HStack>
+            <Button size="xs" variant="outline" onClick={() => void openPreview(bill.localOrderId)}>
+              View
+            </Button>
+            <Button size="xs" variant="outline" onClick={() => void printByOrderId(bill.localOrderId)}>
+              Print
+            </Button>
+          </HStack>
+        )
+      }
+    ],
+    [openPreview, printByOrderId]
+  );
+
   return (
     <VStack align="stretch" spacing={4}>
       <HStack justify="space-between" flexWrap="wrap" gap={3}>
@@ -208,69 +261,13 @@ export const StaffOrdersPage = () => {
         </HStack>
       </HStack>
 
-      <Box
-        border="1px solid"
-        borderColor="rgba(132, 79, 52, 0.2)"
-        borderRadius="14px"
-        overflow="hidden"
-        bg="white"
-        boxShadow="sm"
-      >
-        <Table size="sm">
-          <Thead bg="rgba(247, 238, 229, 0.9)">
-            <Tr>
-              <Th>Invoice</Th>
-              <Th>Customer</Th>
-              <Th>Order Type</Th>
-              <Th isNumeric>Total</Th>
-              <Th>Updated</Th>
-              <Th>Actions</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {pagedBills.length ? (
-              pagedBills.map((bill) => (
-                <Tr key={bill.localOrderId}>
-                  <Td fontWeight={700}>{bill.invoiceNumber}</Td>
-                  <Td>
-                    <VStack align="start" spacing={0}>
-                      <Text>{bill.customerName}</Text>
-                      <Text fontSize="xs" color="#7A6258">
-                        {bill.customerPhone}
-                      </Text>
-                    </VStack>
-                  </Td>
-                  <Td textTransform="capitalize">{toOrderTypeLabel(bill.orderType)}</Td>
-                  <Td isNumeric fontWeight={700}>
-                    {formatRs(bill.totalAmount)}
-                  </Td>
-                  <Td fontSize="xs" color="#7A6258">
-                    {new Date(bill.updatedAt).toLocaleString()}
-                  </Td>
-                  <Td>
-                    <HStack>
-                      <Button size="xs" variant="outline" onClick={() => void openPreview(bill.localOrderId)}>
-                        View
-                      </Button>
-                      <Button size="xs" variant="outline" onClick={() => void printByOrderId(bill.localOrderId)}>
-                        Print
-                      </Button>
-                    </HStack>
-                  </Td>
-                </Tr>
-              ))
-            ) : (
-              <Tr>
-                <Td colSpan={6}>
-                  <Box py={10} textAlign="center" color="#7A6258">
-                    No completed invoices found for current filters.
-                  </Box>
-                </Td>
-              </Tr>
-            )}
-          </Tbody>
-        </Table>
-      </Box>
+      <PosDataTable
+        rows={pagedBills}
+        columns={columns}
+        getRowId={(bill) => bill.localOrderId}
+        emptyMessage="No completed invoices found for current filters."
+        maxColumns={6}
+      />
       <HStack justify="space-between" flexWrap="wrap" gap={3}>
         <Text fontSize="sm" color="#705B52">
           Showing {pagedBills.length} of {filteredBills.length} invoices

@@ -44,6 +44,9 @@ export class PurchaseOrder {
   @Column({ type: "text", nullable: true })
   note!: string | null;
 
+  @Column({ type: "text", nullable: true })
+  invoiceImageUrl!: string | null;
+
   @Column({ type: "uuid", nullable: true })
   createdByUserId!: string | null;
 

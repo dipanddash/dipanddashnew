@@ -6,6 +6,11 @@
   FormLabel,
   HStack,
   Input,
+  Menu,
+  MenuButton,
+  MenuItemOption,
+  MenuList,
+  MenuOptionGroup,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -15,13 +20,7 @@
   ModalOverlay,
   Select,
   SimpleGrid,
-  Table,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   VStack,
   useDisclosure,
   useToast
@@ -31,6 +30,7 @@ import { FiEdit2, FiPlus, FiShoppingBag } from "react-icons/fi";
 
 import { usePosAuth } from "@/app/PosAuthContext";
 import { usePos } from "@/app/PosContext";
+import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import { customersService } from "@/services/customers.service";
 import { gamingBookingsService } from "@/services/gaming-bookings.service";
 import { snookerOrderService } from "@/services/snooker-order.service";
@@ -44,9 +44,10 @@ type FoodDraftLine = { id: string; lineType: FoodLineType; refId: string; quanti
 
 type BookingForm = {
   bookingType: GamingBookingType;
-  resourceCode: string;
+  resourceCodes: string[];
   checkInLocal: string;
   hourlyRate: string;
+  playerCount: string;
   bookingStatus: "upcoming" | "ongoing" | "cancelled";
   paymentStatus: "pending" | "paid";
   paymentMode: GamingPaymentMode;
@@ -84,9 +85,10 @@ const isoToLocalInput = (value: string) => {
 
 const defaultForm = (): BookingForm => ({
   bookingType: "snooker",
-  resourceCode: "",
+  resourceCodes: [],
   checkInLocal: getNowLocalDateTime(),
   hourlyRate: "0",
+  playerCount: "1",
   bookingStatus: "ongoing",
   paymentStatus: "pending",
   paymentMode: "cash",
@@ -151,6 +153,7 @@ export const StaffGamingBookingPage = () => {
   const [foodBooking, setFoodBooking] = useState<GamingBooking | null>(null);
   const [foodLines, setFoodLines] = useState<FoodDraftLine[]>([createFoodLine()]);
   const [foodSearch, setFoodSearch] = useState("");
+  const isEditMode = formMode === "edit";
 
   const loadBookings = useCallback(async () => {
     const rows = await gamingBookingsService.listBookings({ status: statusFilter, search }, 500);
@@ -164,10 +167,27 @@ export const StaffGamingBookingPage = () => {
   }, [loadBookings, refreshCompletedBills, refreshKitchenOrders, refreshPendingBills, refreshRecentBills]);
 
   const resourceOptions = useMemo(() => gamingBookingsService.getResourcesByType(form.bookingType), [form.bookingType]);
+  const selectedResourceCodes = useMemo(
+    () => [...new Set(form.resourceCodes.filter(Boolean))] as GamingBooking["resourceCode"][],
+    [form.resourceCodes]
+  );
+  const selectedResourceLabels = useMemo(
+    () =>
+      resourceOptions
+        .filter((entry) => selectedResourceCodes.includes(entry.code))
+        .map((entry) => entry.label),
+    [resourceOptions, selectedResourceCodes]
+  );
 
   useEffect(() => {
     if (!resourceOptions.length) return;
-    setForm((prev) => ({ ...prev, resourceCode: prev.resourceCode || resourceOptions[0].code }));
+    setForm((prev) => {
+      const existing = prev.resourceCodes.filter((code) => resourceOptions.some((entry) => entry.code === code));
+      if (existing.length) {
+        return { ...prev, resourceCodes: existing };
+      }
+      return { ...prev, resourceCodes: [resourceOptions[0].code] };
+    });
   }, [resourceOptions]);
 
   const summary = useMemo(() => {
@@ -177,7 +197,7 @@ export const StaffGamingBookingPage = () => {
       upcoming: bookings.filter((row) => row.status === "upcoming").length,
       completed: bookings.filter((row) => row.status === "completed").length,
       pending: bookings.filter((row) => row.paymentStatus === "pending").length,
-      players: ongoing.reduce((sum, row) => sum + row.customers.length, 0)
+      players: ongoing.reduce((sum, row) => sum + row.playerCount, 0)
     };
   }, [bookings]);
 
@@ -197,9 +217,10 @@ export const StaffGamingBookingPage = () => {
     setEditingBooking(booking);
     setForm({
       bookingType: booking.bookingType,
-      resourceCode: booking.resourceCode,
+      resourceCodes: booking.resourceCodes?.length ? booking.resourceCodes : [booking.resourceCode],
       checkInLocal: isoToLocalInput(booking.checkInAt),
       hourlyRate: String(booking.hourlyRate),
+      playerCount: String(booking.playerCount),
       bookingStatus: booking.status,
       paymentStatus: booking.paymentStatus === "paid" ? "paid" : "pending",
       paymentMode: booking.paymentMode ?? "cash",
@@ -210,13 +231,19 @@ export const StaffGamingBookingPage = () => {
   };
 
   const saveBooking = async () => {
-    if (!session || !form.resourceCode) return;
+    if (!session) return;
+    if (!selectedResourceCodes.length) {
+      toast({ status: "warning", title: "Select at least one board/console." });
+      return;
+    }
+    const playerCount = Math.max(1, Math.floor(Number(form.playerCount) || 1));
     setSaving(true);
     try {
       if (formMode === "create") {
         await gamingBookingsService.createBooking({
           bookingType: form.bookingType,
-          resourceCode: form.resourceCode as GamingBooking["resourceCode"],
+          resourceCodes: selectedResourceCodes,
+          playerCount,
           customers: form.customers,
           checkInAt: toIsoFromLocal(form.checkInLocal),
           hourlyRate: Number(form.hourlyRate) || 0,
@@ -226,22 +253,18 @@ export const StaffGamingBookingPage = () => {
           note: form.note,
           bookingChannel: "desktop"
         }, session);
+        toast({ status: "success", title: "Booking created successfully" });
       } else if (editingBooking) {
         await gamingBookingsService.updateBooking(editingBooking.localBookingId, {
-          bookingType: form.bookingType,
-          resourceCode: form.resourceCode as GamingBooking["resourceCode"],
           customers: form.customers,
-          checkInAt: toIsoFromLocal(form.checkInLocal),
-          hourlyRate: Number(form.hourlyRate) || 0,
-          status: form.bookingStatus,
+          playerCount,
           paymentStatus: form.paymentStatus,
-          paymentMode: form.paymentStatus === "paid" ? form.paymentMode : undefined,
-          note: form.note
+          paymentMode: form.paymentStatus === "paid" ? form.paymentMode : undefined
         });
+        toast({ status: "success", title: "Booking updated successfully" });
       }
       bookingModal.onClose();
       await loadBookings();
-      toast({ status: "success", title: formMode === "create" ? "Booking created" : "Booking updated" });
     } catch (error) {
       toast({ status: "error", title: formMode === "create" ? "Unable to create booking" : "Unable to update booking", description: error instanceof Error ? error.message : "Please retry." });
     } finally { setSaving(false); }
@@ -345,6 +368,140 @@ export const StaffGamingBookingPage = () => {
     } finally { setSaving(false); }
   };
 
+  const bookingColumns = useMemo<PosTableColumn<GamingBooking>[]>(
+    () => [
+      {
+        key: "bookingNumber",
+        header: "Booking",
+        alwaysVisible: true,
+        render: (booking) => <Text fontWeight={800}>{booking.bookingNumber}</Text>
+      },
+      {
+        key: "customer",
+        header: "Customer",
+        render: (booking) => (
+          <Box>
+            <Text fontWeight={700}>{booking.primaryCustomerName}</Text>
+            <Text fontSize="xs" color="#705A50">
+              {booking.primaryCustomerPhone}
+            </Text>
+          </Box>
+        )
+      },
+      {
+        key: "slot",
+        header: "Slot",
+        render: (booking) => (
+          <Box>
+            <Text textTransform="capitalize">{booking.bookingType}</Text>
+            <Text fontSize="xs" color="#705A50">
+              {booking.resourceCodes?.length
+                ? booking.resourceCodes.map((code) => gamingBookingsService.getResourcesByType(booking.bookingType).find((entry) => entry.code === code)?.label ?? code).join(", ")
+                : booking.resourceLabel}
+            </Text>
+          </Box>
+        )
+      },
+      {
+        key: "players",
+        header: "Players",
+        render: (booking) => <Text fontWeight={700}>{booking.playerCount}</Text>
+      },
+      {
+        key: "checkInAt",
+        header: "Check In",
+        render: (booking) => (
+          <Box>
+            <Text>{formatDateTime(booking.checkInAt)}</Text>
+            {booking.checkOutAt ? (
+              <Text fontSize="xs" color="#705A50">
+                Out: {formatDateTime(booking.checkOutAt)}
+              </Text>
+            ) : null}
+          </Box>
+        )
+      },
+      {
+        key: "amount",
+        header: "Amount",
+        render: (booking) => <Text fontWeight={800}>{formatINR(gamingBookingsService.getLiveAmount(booking))}</Text>
+      },
+      {
+        key: "foodOrder",
+        header: "Food Order",
+        render: (booking) => (
+          <VStack align="start" spacing={1}>
+            <Badge colorScheme={foodStatusColor(booking.foodInvoiceStatus)} textTransform="capitalize">
+              {booking.foodInvoiceStatus === "none" ? "No Order" : booking.foodInvoiceStatus}
+            </Badge>
+            <Text fontSize="xs" color="#705A50">
+              {formatINR(booking.foodAndBeverageAmount)}
+            </Text>
+            {booking.foodInvoiceNumber ? (
+              <Text fontSize="xs" color="#705A50">
+                {booking.foodInvoiceNumber}
+              </Text>
+            ) : null}
+          </VStack>
+        )
+      },
+      {
+        key: "status",
+        header: "Status",
+        render: (booking) => (
+          <Badge colorScheme={statusBadgeColor(booking.status)} textTransform="capitalize">
+            {booking.status}
+          </Badge>
+        )
+      },
+      {
+        key: "payment",
+        header: "Payment",
+        render: (booking) => (
+          <Box>
+            <Badge colorScheme={booking.paymentStatus === "paid" ? "green" : "orange"} textTransform="capitalize">
+              {booking.paymentStatus}
+            </Badge>
+            {booking.paymentStatus === "paid" && booking.paymentMode ? (
+              <Text fontSize="xs" textTransform="uppercase">
+                {booking.paymentMode}
+              </Text>
+            ) : null}
+          </Box>
+        )
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        alwaysVisible: true,
+        render: (booking) =>
+          booking.status === "completed" ? (
+            <Text fontSize="xs" fontWeight={700} color="#705A50">
+              Locked
+            </Text>
+          ) : (
+            <HStack>
+              <Button size="xs" variant="outline" leftIcon={<FiEdit2 size={12} />} onClick={() => openEdit(booking)}>
+                Edit
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                leftIcon={<FiShoppingBag size={12} />}
+                onClick={() => openFoodOrderModal(booking)}
+              >
+                F&B Order
+              </Button>
+              <Button size="xs" onClick={() => openCheckout(booking)}>
+                Checkout
+              </Button>
+            </HStack>
+          )
+      }
+    ],
+    [openCheckout, openEdit, openFoodOrderModal]
+  );
+
   return (
     <VStack align="stretch" spacing={4}>
       <SimpleGrid columns={{ base: 2, xl: 6 }} spacing={3}>
@@ -363,44 +520,96 @@ export const StaffGamingBookingPage = () => {
           <Box display="flex" alignItems="end"><Button variant="outline" onClick={() => void refreshAllViews()}>Refresh</Button></Box>
         </SimpleGrid>
 
-        <Box border="1px solid rgba(132,79,52,0.16)" borderRadius="12px" overflow="hidden">
-          <Table size="sm">
-            <Thead bg="#FFF8EE"><Tr><Th>Booking</Th><Th>Customer</Th><Th>Slot</Th><Th>Check In</Th><Th>Amount</Th><Th>Food Order</Th><Th>Status</Th><Th>Payment</Th><Th>Actions</Th></Tr></Thead>
-            <Tbody>
-              {bookings.map((booking) => (
-                <Tr key={booking.localBookingId}>
-                  <Td fontWeight={800}>{booking.bookingNumber}</Td>
-                  <Td><Text fontWeight={700}>{booking.primaryCustomerName}</Text><Text fontSize="xs" color="#705A50">{booking.primaryCustomerPhone}</Text></Td>
-                  <Td><Text textTransform="capitalize">{booking.bookingType}</Text><Text fontSize="xs" color="#705A50">{booking.resourceLabel}</Text></Td>
-                  <Td><Text>{formatDateTime(booking.checkInAt)}</Text>{booking.checkOutAt ? <Text fontSize="xs" color="#705A50">Out: {formatDateTime(booking.checkOutAt)}</Text> : null}</Td>
-                  <Td fontWeight={800}>{formatINR(gamingBookingsService.getLiveAmount(booking))}</Td>
-                  <Td><VStack align="start" spacing={1}><Badge colorScheme={foodStatusColor(booking.foodInvoiceStatus)} textTransform="capitalize">{booking.foodInvoiceStatus === "none" ? "No Order" : booking.foodInvoiceStatus}</Badge><Text fontSize="xs" color="#705A50">{formatINR(booking.foodAndBeverageAmount)}</Text>{booking.foodInvoiceNumber ? <Text fontSize="xs" color="#705A50">{booking.foodInvoiceNumber}</Text> : null}</VStack></Td>
-                  <Td><Badge colorScheme={statusBadgeColor(booking.status)} textTransform="capitalize">{booking.status}</Badge></Td>
-                  <Td><Badge colorScheme={booking.paymentStatus === "paid" ? "green" : "orange"} textTransform="capitalize">{booking.paymentStatus}</Badge>{booking.paymentStatus === "paid" && booking.paymentMode ? <Text fontSize="xs" textTransform="uppercase">{booking.paymentMode}</Text> : null}</Td>
-                  <Td>{booking.status === "completed" ? <Text fontSize="xs" fontWeight={700} color="#705A50">Locked</Text> : <HStack><Button size="xs" variant="outline" leftIcon={<FiEdit2 size={12} />} onClick={() => openEdit(booking)}>Edit</Button><Button size="xs" variant="outline" leftIcon={<FiShoppingBag size={12} />} onClick={() => openFoodOrderModal(booking)}>F&B Order</Button><Button size="xs" onClick={() => openCheckout(booking)}>Checkout</Button></HStack>}</Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        </Box>
+        <PosDataTable
+          rows={bookings}
+          columns={bookingColumns}
+          getRowId={(booking) => booking.localBookingId}
+          emptyMessage="No bookings found for current filters."
+          maxColumns={6}
+        />
       </Box>
 
       <Modal isOpen={bookingModal.isOpen} onClose={bookingModal.onClose} size="3xl" closeOnOverlayClick={false}>
-        <ModalOverlay /><ModalContent><ModalHeader>{formMode === "create" ? "Create New Booking" : "Edit Booking"}</ModalHeader><ModalCloseButton />
-          <ModalBody>
+        <ModalOverlay /><ModalContent maxH="90vh" overflow="hidden"><ModalHeader>{formMode === "create" ? "Create New Booking" : "Edit Booking"}</ModalHeader><ModalCloseButton />
+          <ModalBody overflowY="auto" pr={2}>
             <VStack align="stretch" spacing={3}>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
-                <FormControl><FormLabel>Booking Type</FormLabel><Select value={form.bookingType} onChange={(e) => setForm((p) => ({ ...p, bookingType: e.target.value as GamingBookingType, resourceCode: "" }))}><option value="snooker">Snooker</option><option value="console">Console</option></Select></FormControl>
-                <FormControl><FormLabel>Board / Console</FormLabel><Select value={form.resourceCode} onChange={(e) => setForm((p) => ({ ...p, resourceCode: e.target.value }))}>{resourceOptions.map((entry) => <option key={entry.code} value={entry.code}>{entry.label}</option>)}</Select></FormControl>
+                <FormControl>
+                  <FormLabel>Booking Type</FormLabel>
+                  <Select
+                    isDisabled={isEditMode}
+                    value={form.bookingType}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        bookingType: e.target.value as GamingBookingType,
+                        resourceCodes: []
+                      }))
+                    }
+                  >
+                    <option value="snooker">Snooker</option>
+                    <option value="console">Console</option>
+                  </Select>
+                </FormControl>
+                <FormControl>
+                  <FormLabel>Board / Console</FormLabel>
+                  {isEditMode ? (
+                    <Input isReadOnly value={selectedResourceLabels.join(", ")} />
+                  ) : (
+                    <Box>
+                      <Menu closeOnSelect={false}>
+                        <MenuButton
+                          as={Button}
+                          variant="outline"
+                          width="100%"
+                          justifyContent="space-between"
+                          borderColor="rgba(227, 95, 107, 0.22)"
+                          bg="white"
+                          _hover={{ bg: "white" }}
+                          _active={{ bg: "white" }}
+                          fontWeight={500}
+                        >
+                          {selectedResourceLabels.length
+                            ? `${selectedResourceLabels.length} selected`
+                            : "Select board/console"}
+                        </MenuButton>
+                        <MenuList minW="100%" maxH="220px" overflowY="auto" zIndex={2000}>
+                          <MenuOptionGroup
+                            type="checkbox"
+                            value={selectedResourceCodes}
+                            onChange={(value) => {
+                              const next = Array.isArray(value) ? value : [value];
+                              setForm((previous) => ({ ...previous, resourceCodes: next }));
+                            }}
+                          >
+                            {resourceOptions.map((entry) => (
+                              <MenuItemOption key={entry.code} value={entry.code}>
+                                {entry.label}
+                              </MenuItemOption>
+                            ))}
+                          </MenuOptionGroup>
+                        </MenuList>
+                      </Menu>
+                      <Text mt={2} fontSize="xs" color="#705A50">
+                        Selected: {selectedResourceLabels.join(", ") || "None"}
+                      </Text>
+                    </Box>
+                  )}
+                </FormControl>
               </SimpleGrid>
-              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
-                <FormControl><FormLabel>Check In</FormLabel><Input type="datetime-local" value={form.checkInLocal} onChange={(e) => setForm((p) => ({ ...p, checkInLocal: e.target.value }))} /></FormControl>
-                <FormControl><FormLabel>Rate / Hour</FormLabel><Input type="number" min={0} value={form.hourlyRate} onChange={(e) => setForm((p) => ({ ...p, hourlyRate: e.target.value }))} /></FormControl>
-                <FormControl><FormLabel>Status</FormLabel><Select value={form.bookingStatus} onChange={(e) => setForm((p) => ({ ...p, bookingStatus: e.target.value as BookingForm["bookingStatus"] }))}><option value="ongoing">Ongoing</option><option value="upcoming">Upcoming</option>{formMode === "edit" ? <option value="cancelled">Cancelled</option> : null}</Select></FormControl>
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                <FormControl><FormLabel>Check In</FormLabel><Input isReadOnly={isEditMode} type="datetime-local" value={form.checkInLocal} onChange={(e) => setForm((p) => ({ ...p, checkInLocal: e.target.value }))} /></FormControl>
+                <FormControl><FormLabel>Rate / Hour</FormLabel><Input isReadOnly={isEditMode} type="number" min={0} value={form.hourlyRate} onChange={(e) => setForm((p) => ({ ...p, hourlyRate: e.target.value }))} /></FormControl>
               </SimpleGrid>
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                <FormControl><FormLabel>Players</FormLabel><Input type="number" min={1} step={1} value={form.playerCount} onChange={(e) => setForm((p) => ({ ...p, playerCount: e.target.value }))} /></FormControl>
+                <FormControl><FormLabel>Status</FormLabel><Select isDisabled={isEditMode} value={form.bookingStatus} onChange={(e) => setForm((p) => ({ ...p, bookingStatus: e.target.value as BookingForm["bookingStatus"] }))}><option value="ongoing">Ongoing</option><option value="upcoming">Upcoming</option>{formMode === "edit" ? <option value="cancelled">Cancelled</option> : null}</Select></FormControl>
+              </SimpleGrid>
+              {!isEditMode ? <Text fontSize="sm" color="#705A50">You can select multiple boards/consoles and create bookings in one click.</Text> : null}
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}><FormControl><FormLabel>Payment Status</FormLabel><Select value={form.paymentStatus} onChange={(e) => setForm((p) => ({ ...p, paymentStatus: e.target.value as "pending" | "paid" }))}><option value="pending">Pending</option><option value="paid">Paid</option></Select></FormControl><FormControl isDisabled={form.paymentStatus !== "paid"}><FormLabel>Payment Mode</FormLabel><Select value={form.paymentMode} onChange={(e) => setForm((p) => ({ ...p, paymentMode: e.target.value as GamingPaymentMode }))}><option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option></Select></FormControl></SimpleGrid>
+              {isEditMode ? <Text fontSize="sm" color="#705A50">Locked fields: booking type, board/console, check-in time, rate and status. Only customers and payment can be updated after check-in.</Text> : null}
               <Box border="1px solid rgba(132,79,52,0.16)" borderRadius="12px" p={3}><HStack justify="space-between" mb={2}><Text fontWeight={800}>Customers</Text><Button size="sm" variant="outline" leftIcon={<FiPlus size={14} />} onClick={() => setForm((p) => ({ ...p, customers: [...p.customers, { name: "", phone: "" }] }))}>Add Customer</Button></HStack><VStack align="stretch" spacing={2}>{form.customers.map((customer, index) => <HStack key={`customer-${index}`} align="end"><FormControl><FormLabel fontSize="xs">Name</FormLabel><Input value={customer.name} onChange={(e) => setForm((p) => ({ ...p, customers: p.customers.map((entry, i) => i === index ? { ...entry, name: e.target.value } : entry) }))} /></FormControl><FormControl><FormLabel fontSize="xs">Phone</FormLabel><Input value={customer.phone} onBlur={() => void applyCustomerLookup(index)} onChange={(e) => setForm((p) => ({ ...p, customers: p.customers.map((entry, i) => i === index ? { ...entry, phone: e.target.value } : entry) }))} /></FormControl></HStack>)}</VStack></Box>
-              <FormControl><FormLabel>Note</FormLabel><Input value={form.note} onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))} placeholder="Booking note" /></FormControl>
+              {!isEditMode ? <FormControl><FormLabel>Note</FormLabel><Input value={form.note} onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))} placeholder="Booking note" /></FormControl> : null}
             </VStack>
           </ModalBody>
           <ModalFooter><HStack><Button variant="outline" onClick={bookingModal.onClose}>Cancel</Button><Button isLoading={saving} onClick={() => void saveBooking()}>{formMode === "create" ? "Create Booking" : "Save Changes"}</Button></HStack></ModalFooter>
@@ -422,7 +631,9 @@ export const StaffGamingBookingPage = () => {
                 </SimpleGrid>
               ))}
               <HStack justify="space-between"><Button leftIcon={<FiPlus size={14} />} variant="outline" onClick={() => setFoodLines((prev) => [...prev, createFoodLine()])}>Add Line</Button><Text fontWeight={800}>Draft Total: {formatINR(foodDraftTotal)}</Text></HStack>
-              <Text fontSize="sm" color="#705A50">Save pannina order Dip & Dash staff pending list la <b>snooker</b> type-ah varum.</Text>
+              <Text fontSize="sm" color="#705A50">
+                This will create a pending <b>snooker</b> order in the Dip & Dash staff queue.
+              </Text>
             </VStack>
           </ModalBody>
           <ModalFooter><HStack><Button variant="outline" onClick={foodModal.onClose}>Cancel</Button><Button isLoading={saving} onClick={() => void saveFoodOrder()}>Send to Dip & Dash</Button></HStack></ModalFooter>
@@ -438,7 +649,9 @@ export const StaffGamingBookingPage = () => {
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}><FormControl><FormLabel>Game Amount (System)</FormLabel><Input value={formatINR(checkoutSystemAmount)} readOnly /></FormControl><FormControl><FormLabel>Food & Beverage</FormLabel><Input value={formatINR(checkoutFoodAmount)} readOnly /></FormControl></SimpleGrid>
               <FormControl><FormLabel>Final Amount (Editable)</FormLabel><Input type="number" min={0} value={checkoutFinalAmount} onChange={(e) => setCheckoutFinalAmount(e.target.value)} /></FormControl>
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}><FormControl><FormLabel>Payment Status</FormLabel><Select value={checkoutPaymentStatus} onChange={(e) => setCheckoutPaymentStatus(e.target.value as "pending" | "paid")}><option value="pending">Pending</option><option value="paid">Paid</option></Select></FormControl><FormControl isDisabled={checkoutPaymentStatus !== "paid"}><FormLabel>Payment Mode</FormLabel><Select value={checkoutPaymentMode} onChange={(e) => setCheckoutPaymentMode(e.target.value as GamingPaymentMode)}><option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option></Select></FormControl></SimpleGrid>
-              <Text fontSize="sm" color="#705A50">Paid select pannina linked Dip & Dash food order auto-paid invoice queue ku pogum.</Text>
+              <Text fontSize="sm" color="#705A50">
+                If marked as paid, the linked Dip & Dash food order will be moved to the paid invoice queue automatically.
+              </Text>
             </VStack>
           </ModalBody>
           <ModalFooter><HStack><Button variant="outline" onClick={checkoutModal.onClose}>Cancel</Button><Button isLoading={saving} onClick={() => void confirmCheckout()}>Confirm Checkout</Button></HStack></ModalFooter>

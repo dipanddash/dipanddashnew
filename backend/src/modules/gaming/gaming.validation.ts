@@ -56,6 +56,18 @@ export const gamingCreateSchema = z.object({
       .refine((value) => ALL_GAMING_RESOURCES.includes(value as (typeof ALL_GAMING_RESOURCES)[number]), {
         message: "Invalid board/console selected."
       }),
+    resourceCodes: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .refine((value) => ALL_GAMING_RESOURCES.includes(value as (typeof ALL_GAMING_RESOURCES)[number]), {
+            message: "Invalid board/console selected."
+          })
+      )
+      .min(1)
+      .optional(),
     checkInAt: z.string().datetime().optional(),
     checkOutAt: z.string().datetime().optional(),
     hourlyRate: z.coerce.number().min(0),
@@ -98,6 +110,18 @@ export const gamingUpdateSchema = z.object({
       .refine((value) => ALL_GAMING_RESOURCES.includes(value as (typeof ALL_GAMING_RESOURCES)[number]), {
         message: "Invalid board/console selected."
       })
+      .optional(),
+    resourceCodes: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .refine((value) => ALL_GAMING_RESOURCES.includes(value as (typeof ALL_GAMING_RESOURCES)[number]), {
+            message: "Invalid board/console selected."
+          })
+      )
+      .min(1)
       .optional(),
     checkInAt: z.string().datetime().optional(),
     hourlyRate: z.coerce.number().min(0).optional(),

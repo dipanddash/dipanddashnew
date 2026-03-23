@@ -3,6 +3,8 @@ import {
   Checkbox,
   FormControl,
   FormLabel,
+  Grid,
+  GridItem,
   HStack,
   Modal,
   ModalBody,
@@ -44,6 +46,7 @@ import { useAppToast } from "@/hooks/useAppToast";
 import { useModalCloseGuard } from "@/hooks/useModalCloseGuard";
 import { procurementService } from "@/services/procurement.service";
 import type {
+  CreatePurchaseOrderInput,
   CreatePurchaseLineInput,
   ProductListItem,
   ProductListResponse,
@@ -120,7 +123,11 @@ type PurchaseOrderModalProps = {
   loading: boolean;
   meta: ProcurementMetaResponse | null;
   onLoadMetaForDate: (date: string) => Promise<void>;
-  onSubmit: (payload: { supplierId: string; purchaseDate: string; note?: string; lines: CreatePurchaseLineInput[] }) => Promise<void>;
+  onSubmit: (
+    payload: CreatePurchaseOrderInput & {
+      invoiceImageFile?: File | null;
+    }
+  ) => Promise<void>;
 };
 
 const PurchaseOrderModal = ({
@@ -136,6 +143,8 @@ const PurchaseOrderModal = ({
   const [purchaseDate, setPurchaseDate] = useState(getTodayDate());
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<DraftPurchaseLine[]>([createEmptyLine()]);
+  const [invoiceImageFile, setInvoiceImageFile] = useState<File | null>(null);
+  const [invoicePreviewUrl, setInvoicePreviewUrl] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
@@ -145,7 +154,17 @@ const PurchaseOrderModal = ({
     setPurchaseDate(meta?.date ?? getTodayDate());
     setNote("");
     setLines([createEmptyLine()]);
+    setInvoiceImageFile(null);
+    setInvoicePreviewUrl("");
   }, [isOpen, meta?.date, meta?.suppliers]);
+
+  useEffect(() => {
+    return () => {
+      if (invoicePreviewUrl) {
+        URL.revokeObjectURL(invoicePreviewUrl);
+      }
+    };
+  }, [invoicePreviewUrl]);
 
   const supplierOptions: AppSearchableSelectOption[] = useMemo(
     () =>
@@ -238,6 +257,22 @@ const PurchaseOrderModal = ({
     });
   };
 
+  const handleInvoiceFileChange = (nextFile: File | null) => {
+    if (invoicePreviewUrl) {
+      URL.revokeObjectURL(invoicePreviewUrl);
+    }
+
+    if (!nextFile) {
+      setInvoiceImageFile(null);
+      setInvoicePreviewUrl("");
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(nextFile);
+    setInvoiceImageFile(nextFile);
+    setInvoicePreviewUrl(previewUrl);
+  };
+
   const handleSave = async () => {
     const payloadLines = lines
       .map((line) => {
@@ -266,7 +301,8 @@ const PurchaseOrderModal = ({
       supplierId,
       purchaseDate,
       note: note.trim() || undefined,
-      lines: payloadLines
+      lines: payloadLines,
+      invoiceImageFile
     });
   };
 
@@ -418,6 +454,61 @@ const PurchaseOrderModal = ({
                   Total: {formatCurrency(totalAmount)}
                 </Text>
               </HStack>
+
+              <FormControl>
+                <FormLabel>Invoice Image (optional)</FormLabel>
+                <AppInput
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  p={1}
+                  onChange={(event) => {
+                    const target = event.target as HTMLInputElement;
+                    handleInvoiceFileChange(target.files?.[0] ?? null);
+                  }}
+                />
+                <Text mt={2} fontSize="xs" color="#7A6359">
+                  Upload supplier invoice image for future reference. Max size: 5 MB.
+                </Text>
+                {invoiceImageFile ? (
+                  <HStack
+                    mt={3}
+                    align="center"
+                    justify="space-between"
+                    p={3}
+                    border="1px solid"
+                    borderColor="rgba(133, 78, 48, 0.22)"
+                    borderRadius="12px"
+                    bg="white"
+                  >
+                    <HStack align="center" spacing={3}>
+                      {invoicePreviewUrl ? (
+                        <Box
+                          as="img"
+                          src={invoicePreviewUrl}
+                          alt="Invoice preview"
+                          w="56px"
+                          h="56px"
+                          borderRadius="10px"
+                          objectFit="cover"
+                          border="1px solid"
+                          borderColor="rgba(133, 78, 48, 0.2)"
+                        />
+                      ) : null}
+                      <Box>
+                        <Text fontWeight={700} color="#3C2A23">
+                          {invoiceImageFile.name}
+                        </Text>
+                        <Text fontSize="xs" color="#7A6359">
+                          {(invoiceImageFile.size / 1024 / 1024).toFixed(2)} MB
+                        </Text>
+                      </Box>
+                    </HStack>
+                    <AppButton variant="outline" size="sm" onClick={() => handleInvoiceFileChange(null)}>
+                      Remove
+                    </AppButton>
+                  </HStack>
+                ) : null}
+              </FormControl>
 
               <FormControl>
                 <FormLabel>Note (optional)</FormLabel>
@@ -654,6 +745,7 @@ const ProductFormModal = ({ isOpen, onClose, loading, initialData, suppliers, un
 
 export const PurchasePage = () => {
   const toast = useAppToast();
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
 
   const [suppliers, setSuppliers] = useState<SupplierListItem[]>([]);
   const [meta, setMeta] = useState<ProcurementMetaResponse | null>(null);
@@ -722,7 +814,7 @@ export const PurchasePage = () => {
 
   const loadSuppliers = useCallback(async () => {
     try {
-      const response = await procurementService.getSuppliers({ includeInactive: true, page: 1, limit: 200 });
+      const response = await procurementService.getSuppliers({ includeInactive: true, page: 1, limit: 100 });
       setSuppliers(response.data.suppliers);
     } catch (error) {
       toast.error("Unable to fetch suppliers", extractErrorMessage(error));
@@ -844,15 +936,25 @@ export const PurchasePage = () => {
     deleteProductDialog.onOpen();
   };
 
-  const handleCreateOrder = async (payload: {
-    supplierId: string;
-    purchaseDate: string;
-    note?: string;
-    lines: CreatePurchaseLineInput[];
-  }) => {
+  const handleCreateOrder = async (
+    payload: CreatePurchaseOrderInput & {
+      invoiceImageFile?: File | null;
+    }
+  ) => {
     setMutationLoading(true);
     try {
-      await procurementService.createPurchaseOrder(payload);
+      const { invoiceImageFile, ...createPayload } = payload;
+      let invoiceImageUrl = createPayload.invoiceImageUrl;
+
+      if (invoiceImageFile) {
+        const uploadResponse = await procurementService.uploadPurchaseInvoiceImage(invoiceImageFile);
+        invoiceImageUrl = uploadResponse.data.imageUrl;
+      }
+
+      await procurementService.createPurchaseOrder({
+        ...createPayload,
+        invoiceImageUrl
+      });
       toast.success("Purchase order created successfully");
       orderModal.onClose();
       await Promise.all([loadOrders(), loadProducts(), loadStats(), loadMeta(payload.purchaseDate)]);
@@ -925,29 +1027,89 @@ export const PurchasePage = () => {
         <AppCard p={4}><Text fontSize="sm" color="#7B645B">Product Spend</Text><Text fontSize="2xl" fontWeight={900}>{formatCurrency(stats.totalProductPurchasedAmount)}</Text></AppCard>
       </SimpleGrid>
 
-      <Tabs variant="soft-rounded" colorScheme="brand">
-        <TabList gap={3}>
-          <Tab>Purchase Orders</Tab>
-          <Tab>Products</Tab>
-        </TabList>
+      <Tabs variant="soft-rounded" colorScheme="brand" index={activeTabIndex} onChange={setActiveTabIndex}>
+        <Box
+          display="flex"
+          flexDirection={{ base: "column", lg: "row" }}
+          justifyContent="space-between"
+          alignItems={{ base: "stretch", lg: "center" }}
+          gap={3}
+        >
+          <TabList gap={3}>
+            <Tab>Purchase Orders</Tab>
+            <Tab>Products</Tab>
+          </TabList>
+          <AppButton
+            leftIcon={<Plus size={16} />}
+            onClick={activeTabIndex === 0 ? orderModal.onOpen : openCreateProduct}
+            alignSelf={{ base: "stretch", lg: "flex-end" }}
+            minW={{ lg: "170px" }}
+            whiteSpace="nowrap"
+          >
+            {activeTabIndex === 0 ? "New Purchase" : "Add Product"}
+          </AppButton>
+        </Box>
         <TabPanels pt={4}>
           <TabPanel px={0}>
             <AppCard>
-              <SimpleGrid columns={{ base: 1, md: 6 }} spacing={3}>
-                <AppInput label="Search" placeholder="Search purchase number or supplier" value={orderSearch} onChange={(event) => setOrderSearch((event.target as HTMLInputElement).value)} />
-                <AppSearchableSelect label="Supplier" value={orderSupplierFilter} options={supplierOptions} onValueChange={setOrderSupplierFilter} />
-                <AppInput label="From Date" type="date" value={dateFrom} onChange={(event) => setDateFrom((event.target as HTMLInputElement).value)} />
-                <AppInput label="To Date" type="date" value={dateTo} onChange={(event) => setDateTo((event.target as HTMLInputElement).value)} />
-                <FormControl>
-                  <FormLabel>Rows per page</FormLabel>
-                  <Select value={orderLimit} onChange={(event) => setOrderLimit(Number((event.target as HTMLSelectElement).value))} bg="white" borderColor="rgba(193, 14, 14, 0.18)" focusBorderColor="brand.400">
-                    <option value={5}>5</option>
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                  </Select>
-                </FormControl>
-                <HStack justify="flex-end" align="end"><AppButton leftIcon={<Plus size={16} />} onClick={orderModal.onOpen}>New Purchase</AppButton></HStack>
-              </SimpleGrid>
+              <Grid
+                templateColumns={{
+                  base: "1fr",
+                  md: "repeat(2, minmax(0, 1fr))",
+                  xl: "minmax(250px, 1.7fr) minmax(230px, 1.5fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(130px, 0.8fr)"
+                }}
+                gap={3}
+                alignItems="end"
+              >
+                <GridItem>
+                  <AppInput
+                    label="Search"
+                    placeholder="Search purchase number or supplier"
+                    value={orderSearch}
+                    onChange={(event) => setOrderSearch((event.target as HTMLInputElement).value)}
+                  />
+                </GridItem>
+                <GridItem>
+                  <AppSearchableSelect
+                    label="Supplier"
+                    value={orderSupplierFilter}
+                    options={supplierOptions}
+                    onValueChange={setOrderSupplierFilter}
+                  />
+                </GridItem>
+                <GridItem>
+                  <AppInput
+                    label="From Date"
+                    type="date"
+                    value={dateFrom}
+                    onChange={(event) => setDateFrom((event.target as HTMLInputElement).value)}
+                  />
+                </GridItem>
+                <GridItem>
+                  <AppInput
+                    label="To Date"
+                    type="date"
+                    value={dateTo}
+                    onChange={(event) => setDateTo((event.target as HTMLInputElement).value)}
+                  />
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>Rows per page</FormLabel>
+                    <Select
+                      value={orderLimit}
+                      onChange={(event) => setOrderLimit(Number((event.target as HTMLSelectElement).value))}
+                      bg="white"
+                      borderColor="rgba(193, 14, 14, 0.18)"
+                      focusBorderColor="brand.400"
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </Select>
+                  </FormControl>
+                </GridItem>
+              </Grid>
 
               <Box mt={4}>
                 {ordersLoading ? (
@@ -983,21 +1145,56 @@ export const PurchasePage = () => {
 
           <TabPanel px={0}>
             <AppCard>
-              <SimpleGrid columns={{ base: 1, md: 6 }} spacing={3}>
-                <AppInput label="Search Product" placeholder="Search name, sku, pack size" value={productSearch} onChange={(event) => setProductSearch((event.target as HTMLInputElement).value)} />
-                <AppSearchableSelect label="Category" value={productCategoryFilter} options={categoryFilterOptions} onValueChange={setProductCategoryFilter} />
-                <AppSearchableSelect label="Supplier" value={productSupplierFilter} options={supplierOptions} onValueChange={setProductSupplierFilter} />
-                <FormControl>
-                  <FormLabel>Rows per page</FormLabel>
-                  <Select value={productLimit} onChange={(event) => setProductLimit(Number((event.target as HTMLSelectElement).value))} bg="white" borderColor="rgba(193, 14, 14, 0.18)" focusBorderColor="brand.400">
-                    <option value={5}>5</option>
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                  </Select>
-                </FormControl>
-                <Box />
-                <HStack justify="flex-end" align="end"><AppButton leftIcon={<Plus size={16} />} onClick={openCreateProduct}>Add Product</AppButton></HStack>
-              </SimpleGrid>
+              <Grid
+                templateColumns={{
+                  base: "1fr",
+                  md: "repeat(2, minmax(0, 1fr))",
+                  xl: "minmax(250px, 1.5fr) minmax(230px, 1.2fr) minmax(230px, 1.2fr) minmax(140px, 0.8fr)"
+                }}
+                gap={3}
+                alignItems="end"
+              >
+                <GridItem>
+                  <AppInput
+                    label="Search Product"
+                    placeholder="Search name, sku, pack size"
+                    value={productSearch}
+                    onChange={(event) => setProductSearch((event.target as HTMLInputElement).value)}
+                  />
+                </GridItem>
+                <GridItem>
+                  <AppSearchableSelect
+                    label="Category"
+                    value={productCategoryFilter}
+                    options={categoryFilterOptions}
+                    onValueChange={setProductCategoryFilter}
+                  />
+                </GridItem>
+                <GridItem>
+                  <AppSearchableSelect
+                    label="Supplier"
+                    value={productSupplierFilter}
+                    options={supplierOptions}
+                    onValueChange={setProductSupplierFilter}
+                  />
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>Rows per page</FormLabel>
+                    <Select
+                      value={productLimit}
+                      onChange={(event) => setProductLimit(Number((event.target as HTMLSelectElement).value))}
+                      bg="white"
+                      borderColor="rgba(193, 14, 14, 0.18)"
+                      focusBorderColor="brand.400"
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </Select>
+                  </FormControl>
+                </GridItem>
+              </Grid>
 
               <SimpleGrid mt={4} columns={{ base: 2, lg: 5 }} spacing={3}>
                 <AppCard p={3}><Text fontSize="xs" color="#7B645B">Total Products</Text><Text fontSize="xl" fontWeight={900}>{productStats.totalProducts}</Text></AppCard>
@@ -1104,6 +1301,32 @@ export const PurchasePage = () => {
                   <AppCard p={3}><Text fontSize="xs" color="#7B645B">Date</Text><Text fontWeight={900}>{formatDate(selectedOrder.purchaseDate)}</Text></AppCard>
                   <AppCard p={3}><Text fontSize="xs" color="#7B645B">Total</Text><Text fontWeight={900}>{formatCurrency(selectedOrder.totalAmount)}</Text></AppCard>
                 </SimpleGrid>
+                {selectedOrder.invoiceImageUrl ? (
+                  <AppCard p={3}>
+                    <Text fontSize="xs" color="#7B645B" mb={2}>
+                      Invoice Image
+                    </Text>
+                    <HStack justify="space-between" align="start" flexWrap="wrap" gap={3}>
+                      <Box
+                        as="img"
+                        src={selectedOrder.invoiceImageUrl}
+                        alt="Purchase invoice"
+                        maxH="220px"
+                        borderRadius="10px"
+                        border="1px solid"
+                        borderColor="rgba(133, 78, 48, 0.24)"
+                        objectFit="contain"
+                        bg="white"
+                      />
+                      <AppButton
+                        variant="outline"
+                        onClick={() => window.open(selectedOrder.invoiceImageUrl ?? "", "_blank", "noopener,noreferrer")}
+                      >
+                        Open Full Image
+                      </AppButton>
+                    </HStack>
+                  </AppCard>
+                ) : null}
                 <DataTable columns={[{ key: "itemNameSnapshot", header: "Item" }, { key: "lineType", header: "Type", render: (row: any) => String(row.lineType).toUpperCase() }, { key: "stockAdded", header: "Added", render: (row: any) => `${row.stockAdded} ${row.unit}` }, { key: "unitPrice", header: "Unit Price", render: (row: any) => formatCurrency(row.unitPrice) }, { key: "lineTotal", header: "Line Total", render: (row: any) => formatCurrency(row.lineTotal) }]} rows={selectedOrder.lines as any} />
               </VStack>
             ) : null}

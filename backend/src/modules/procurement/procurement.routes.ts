@@ -5,6 +5,7 @@ import { asyncHandler } from "../../middlewares/async-handler";
 import { authenticate, authorizeRoles } from "../../middlewares/auth.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
 import { ProcurementController } from "./procurement.controller";
+import { purchaseInvoiceImageUpload } from "./procurement-upload.middleware";
 import {
   createProductSchema,
   createPurchaseOrderSchema,
@@ -54,6 +55,11 @@ router.get(
   "/purchase-orders",
   validateRequest(purchaseOrderListSchema),
   asyncHandler(procurementController.listPurchaseOrders)
+);
+router.post(
+  "/purchase-orders/upload-invoice",
+  purchaseInvoiceImageUpload.single("image"),
+  asyncHandler(procurementController.uploadInvoiceImage)
 );
 router.get(
   "/purchase-orders/:id",

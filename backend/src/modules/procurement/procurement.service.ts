@@ -94,6 +94,7 @@ type CreatePurchaseOrderPayload = {
   supplierId: string;
   purchaseDate?: string;
   note?: string;
+  invoiceImageUrl?: string;
   lines: PurchaseOrderLinePayload[];
 };
 
@@ -281,7 +282,7 @@ export class ProcurementService {
 
   async listSuppliers(filters: SupplierListFilters) {
     const page = Math.max(1, filters.page || 1);
-    const limit = Math.min(100, Math.max(1, filters.limit || 10));
+    const limit = Math.min(200, Math.max(1, filters.limit || 10));
     const offset = (page - 1) * limit;
 
     const query = this.supplierRepository.createQueryBuilder("supplier").orderBy("supplier.createdAt", "DESC");
@@ -419,7 +420,7 @@ export class ProcurementService {
 
   async listProducts(filters: ProductListFilters) {
     const page = Math.max(1, filters.page || 1);
-    const limit = Math.min(100, Math.max(1, filters.limit || 10));
+    const limit = Math.min(200, Math.max(1, filters.limit || 10));
     const offset = (page - 1) * limit;
 
     const query = this.productRepository
@@ -773,6 +774,7 @@ export class ProcurementService {
         purchaseType,
         totalAmount: toFixedPrice(totalAmount),
         note: payload.note?.trim() || null,
+        invoiceImageUrl: payload.invoiceImageUrl?.trim() || null,
         createdByUserId
       });
       const savedOrder = await queryRunner.manager.save(PurchaseOrder, order);
@@ -794,7 +796,7 @@ export class ProcurementService {
 
   async listPurchaseOrders(filters: PurchaseOrderListFilters) {
     const page = Math.max(1, filters.page || 1);
-    const limit = Math.min(100, Math.max(1, filters.limit || 10));
+    const limit = Math.min(200, Math.max(1, filters.limit || 10));
     const offset = (page - 1) * limit;
 
     const query = this.purchaseOrderRepository
@@ -884,6 +886,7 @@ export class ProcurementService {
         lineCount: lineCountMap.get(order.id) ?? 0,
         totalAmount: toFixedPrice(toNumber(order.totalAmount)),
         note: order.note,
+        invoiceImageUrl: order.invoiceImageUrl,
         createdByUserId: order.createdByUserId,
         createdByUserName: order.createdByUser?.fullName ?? null,
         createdAt: order.createdAt,
@@ -928,6 +931,7 @@ export class ProcurementService {
       supplierName: order.supplier?.name ?? "-",
       supplierPhone: order.supplier?.phone ?? "-",
       note: order.note,
+      invoiceImageUrl: order.invoiceImageUrl,
       totalAmount: toFixedPrice(toNumber(order.totalAmount)),
       createdByUserId: order.createdByUserId,
       createdByUserName: order.createdByUser?.fullName ?? null,

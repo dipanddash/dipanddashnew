@@ -23,7 +23,13 @@ import { useAuth } from "@/context/AuthContext";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAppToast } from "@/hooks/useAppToast";
 import { gamingService } from "@/services/gaming.service";
-import type { GamingBookingRow, GamingBookingStatus, GamingPaymentStatus, GamingStats } from "@/types/gaming";
+import type {
+  GamingBookingRow,
+  GamingBookingStatus,
+  GamingPaymentStatus,
+  GamingResourceAvailability,
+  GamingStats
+} from "@/types/gaming";
 import { UserRole } from "@/types/role";
 import { extractErrorMessage } from "@/utils/api-error";
 
@@ -106,9 +112,7 @@ export const GamingPage = () => {
   const [stats, setStats] = useState<GamingStats>(emptyStats);
   const [statsLoading, setStatsLoading] = useState(true);
   const [bookings, setBookings] = useState<GamingBookingRow[]>([]);
-  const [resources, setResources] = useState<
-    Array<{ resourceCode: string; resourceLabel: string; bookingType: "snooker" | "console"; isAvailable: boolean }>
-  >([]);
+  const [resources, setResources] = useState<GamingResourceAvailability[]>([]);
   const [tableLoading, setTableLoading] = useState(true);
 
   const [search, setSearch] = useState("");
@@ -123,7 +127,6 @@ export const GamingPage = () => {
   const [limit, setLimit] = useState(8);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
@@ -140,14 +143,7 @@ export const GamingPage = () => {
   const fetchResources = useCallback(async () => {
     try {
       const response = await gamingService.getResources();
-      setResources(
-        response.data.resources.map((entry) => ({
-          resourceCode: entry.resourceCode,
-          resourceLabel: entry.resourceLabel,
-          bookingType: entry.bookingType,
-          isAvailable: entry.isAvailable
-        }))
-      );
+      setResources(response.data.resources);
     } catch {
       setResources([]);
     }
@@ -197,44 +193,6 @@ export const GamingPage = () => {
     setPage(1);
   }, [debouncedSearch, bookingType, status, paymentStatus, resourceCode, limit]);
 
-  const handleCheckout = useCallback(
-    async (row: GamingBookingRow) => {
-      setActionLoadingId(`checkout-${row.id}`);
-      try {
-        const checkoutPaymentStatus: "pending" | "paid" =
-          row.paymentStatus === "paid" ? "paid" : "pending";
-        await gamingService.checkoutBooking(row.id, {
-          paymentStatus: checkoutPaymentStatus,
-          paymentMode: checkoutPaymentStatus === "paid" ? row.paymentMode ?? "cash" : undefined
-        });
-        toast.success("Booking checked out successfully");
-        await refreshAll();
-      } catch (error) {
-        toast.error(extractErrorMessage(error, "Unable to checkout this booking."));
-      } finally {
-        setActionLoadingId(null);
-      }
-    },
-    [refreshAll, toast]
-  );
-
-  const handleTogglePayment = useCallback(
-    async (row: GamingBookingRow) => {
-      setActionLoadingId(`payment-${row.id}`);
-      try {
-        const next: GamingPaymentStatus = row.paymentStatus === "paid" ? "pending" : "paid";
-        await gamingService.updatePaymentStatus(row.id, next, next === "paid" ? row.paymentMode ?? "cash" : undefined);
-        toast.success(next === "paid" ? "Marked as paid" : "Marked as pending");
-        await refreshAll();
-      } catch (error) {
-        toast.error(extractErrorMessage(error, "Unable to update payment status."));
-      } finally {
-        setActionLoadingId(null);
-      }
-    },
-    [refreshAll, toast]
-  );
-
   const statusPieData = useMemo(
     () => [
       { name: "Ongoing", value: stats.totals.ongoing, color: "#1E9C58" },
@@ -244,6 +202,41 @@ export const GamingPage = () => {
     ],
     [stats.totals]
   );
+
+  const sessionSplit = useMemo(() => {
+    const snookerSessions = stats.resourceUsage
+      .filter((resource) => resource.resourceCode.startsWith("board_"))
+      .reduce((sum, resource) => sum + resource.bookings, 0);
+    const consoleSessions = stats.resourceUsage
+      .filter((resource) => !resource.resourceCode.startsWith("board_"))
+      .reduce((sum, resource) => sum + resource.bookings, 0);
+
+    const snookerResources = resources.filter((resource) => resource.bookingType === "snooker");
+    const consoleResources = resources.filter((resource) => resource.bookingType === "console");
+
+    const snookerOccupied = snookerResources.filter((resource) => !resource.isAvailable).length;
+    const consoleOccupied = consoleResources.filter((resource) => !resource.isAvailable).length;
+
+    const snookerPlayers = snookerResources.reduce(
+      (sum, resource) => sum + (resource.activeBooking?.customerCount ?? 0),
+      0
+    );
+    const consolePlayers = consoleResources.reduce(
+      (sum, resource) => sum + (resource.activeBooking?.customerCount ?? 0),
+      0
+    );
+
+    return {
+      snookerSessions,
+      consoleSessions,
+      snookerOccupied,
+      consoleOccupied,
+      snookerTotal: snookerResources.length,
+      consoleTotal: consoleResources.length,
+      snookerPlayers,
+      consolePlayers
+    };
+  }, [resources, stats.resourceUsage]);
 
   const columns = useMemo(
     () =>
@@ -267,7 +260,7 @@ export const GamingPage = () => {
             <VStack align="start" spacing={0}>
               <Text fontWeight={700}>{row.primaryCustomerName}</Text>
               <Text fontSize="xs" color="#7A6258">
-                {row.primaryCustomerPhone} • {row.customerCount} player(s)
+                {row.primaryCustomerPhone} | {row.customerCount} player(s)
               </Text>
             </VStack>
           )
@@ -303,10 +296,10 @@ export const GamingPage = () => {
             <VStack align="start" spacing={0}>
               <Text fontWeight={700}>{formatCurrency(row.finalAmount)}</Text>
               <Text fontSize="xs" color="#7A6258">
-                Live {formatCurrency(row.calculatedAmount)} • {row.durationMinutes} mins
+                Live {formatCurrency(row.calculatedAmount)} | {row.durationMinutes} mins
               </Text>
               <Text fontSize="xs" color="#7A6258">
-                F&B {formatCurrency(row.foodAndBeverageAmount)} • {row.foodInvoiceStatus}
+                F&B {formatCurrency(row.foodAndBeverageAmount)} | {row.foodInvoiceStatus}
               </Text>
             </VStack>
           )
@@ -340,35 +333,9 @@ export const GamingPage = () => {
           key: "staff",
           header: "Staff",
           render: (row: GamingBookingRow) => row.staffName || row.staffUsername || "-"
-        },
-        {
-          key: "actions",
-          header: "Actions",
-          render: (row: GamingBookingRow) => (
-            <HStack spacing={2}>
-              <AppButton
-                size="sm"
-                variant="outline"
-                isDisabled={row.status === "completed"}
-                isLoading={actionLoadingId === `checkout-${row.id}`}
-                onClick={() => void handleCheckout(row)}
-              >
-                Checkout
-              </AppButton>
-              <AppButton
-                size="sm"
-                variant="outline"
-                isLoading={actionLoadingId === `payment-${row.id}`}
-                isDisabled={row.status === "completed"}
-                onClick={() => void handleTogglePayment(row)}
-              >
-                {row.paymentStatus === "paid" ? "Set Pending" : "Set Paid"}
-              </AppButton>
-            </HStack>
-          )
         }
       ] as Array<{ key: string; header: string; render?: (row: GamingBookingRow) => ReactNode }>,
-    [actionLoadingId, handleCheckout, handleTogglePayment]
+    []
   );
 
   if (user?.role !== UserRole.ADMIN) {
@@ -386,7 +353,7 @@ export const GamingPage = () => {
     <VStack spacing={6} align="stretch">
       <PageHeader
         title="Gaming Management"
-        subtitle="Track snooker and console sessions, monitor collections, and manage live bookings."
+        subtitle="Admin view-only dashboard for snooker and console sessions, collections, and occupancy."
       />
 
       <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={4}>
@@ -409,6 +376,29 @@ export const GamingPage = () => {
           label="Pending Collection"
           value={statsLoading ? "..." : formatCurrency(stats.totals.pendingCollection)}
           helper={`${stats.totals.pendingPayments} payment pending`}
+        />
+      </SimpleGrid>
+
+      <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={4}>
+        <StatsCard
+          label="Snooker Sessions"
+          value={statsLoading ? "..." : String(sessionSplit.snookerSessions)}
+          helper={`${sessionSplit.snookerPlayers} active players | ${sessionSplit.snookerOccupied}/${sessionSplit.snookerTotal} tables occupied`}
+        />
+        <StatsCard
+          label="Console Sessions"
+          value={statsLoading ? "..." : String(sessionSplit.consoleSessions)}
+          helper={`${sessionSplit.consolePlayers} active players | ${sessionSplit.consoleOccupied}/${sessionSplit.consoleTotal} consoles occupied`}
+        />
+        <StatsCard
+          label="Snooker Occupancy"
+          value={statsLoading ? "..." : `${sessionSplit.snookerOccupied}/${sessionSplit.snookerTotal}`}
+          helper="Current board usage"
+        />
+        <StatsCard
+          label="Console Occupancy"
+          value={statsLoading ? "..." : `${sessionSplit.consoleOccupied}/${sessionSplit.consoleTotal}`}
+          helper="Current console usage"
         />
       </SimpleGrid>
 
@@ -442,7 +432,7 @@ export const GamingPage = () => {
         </AppCard>
       </SimpleGrid>
 
-      <AppCard title="Bookings" subtitle="Search, monitor and update gaming sessions from one place.">
+      <AppCard title="Bookings" subtitle="Search and monitor gaming sessions. Admin actions are disabled (view only).">
         <VStack spacing={4} align="stretch">
           <SimpleGrid columns={{ base: 1, md: 2, xl: 4 }} spacing={4}>
             <AppInput
@@ -534,7 +524,7 @@ export const GamingPage = () => {
                   borderRadius="full"
                   textTransform="none"
                 >
-                  {resource.resourceLabel} • {resource.isAvailable ? "Free" : "Occupied"}
+                  {resource.resourceLabel} | {resource.isAvailable ? "Free" : "Occupied"}
                 </Badge>
               ))}
             </HStack>

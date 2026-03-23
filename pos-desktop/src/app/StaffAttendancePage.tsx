@@ -1,0 +1,355 @@
+import {
+  Box,
+  Button,
+  FormControl,
+  FormLabel,
+  HStack,
+  Input,
+  Select,
+  SimpleGrid,
+  Table,
+  Tbody,
+  Td,
+  Text,
+  Th,
+  Thead,
+  Tr,
+  VStack,
+  useToast
+} from "@chakra-ui/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { attendanceService } from "@/services/attendance.service";
+import { usePosAuth } from "@/app/PosAuthContext";
+import type { AttendanceRecord, AttendanceSummary } from "@/types/attendance";
+import { extractApiErrorMessage } from "@/utils/api-error";
+
+const defaultSummary: AttendanceSummary = {
+  totalRecords: 0,
+  presentStaff: 0,
+  currentlyPunchedIn: 0,
+  activeHours: 0,
+  breakHours: 0,
+  totalHours: 0
+};
+
+const getTodayString = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const formatMinutesAsHours = (minutes: number) => `${(minutes / 60).toFixed(2)}h`;
+
+const dateTimeFormatter = new Intl.DateTimeFormat("en-IN", {
+  dateStyle: "medium",
+  timeStyle: "short"
+});
+
+export const StaffAttendancePage = () => {
+  const toast = useToast();
+  const { session } = usePosAuth();
+
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [summary, setSummary] = useState<AttendanceSummary>(defaultSummary);
+  const [dateFilter, setDateFilter] = useState(getTodayString());
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(5);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [username, setUsername] = useState(session?.username ?? "");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [isCacheData, setIsCacheData] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  useEffect(() => {
+    setUsername(session?.username ?? "");
+  }, [session?.username]);
+
+  const hasOpenSession = useMemo(() => records.some((record) => record.status === "punched_in"), [records]);
+
+  const fetchRecords = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await attendanceService.getMyRecords({
+        date: dateFilter || undefined,
+        page,
+        limit
+      });
+      setRecords(response.data.records);
+      setSummary(response.data.summary);
+      setTotal(response.data.pagination.total);
+      setTotalPages(response.data.pagination.totalPages);
+      setIsCacheData(response.fromCache);
+    } catch (error) {
+      setIsCacheData(false);
+      toast({
+        status: "error",
+        title: "Unable to load attendance",
+        description: extractApiErrorMessage(error, "Please try again.")
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [dateFilter, limit, page, toast]);
+
+  useEffect(() => {
+    void fetchRecords();
+  }, [fetchRecords]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [dateFilter, limit]);
+
+  const submitPunch = async () => {
+    if (!username.trim() || !password) {
+      toast({
+        status: "warning",
+        title: "Enter username and password"
+      });
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = hasOpenSession
+        ? await attendanceService.punchOut({ username: username.trim(), password })
+        : await attendanceService.punchIn({ username: username.trim(), password });
+
+      toast({
+        status: "success",
+        title: response.message
+      });
+      setPassword("");
+      await fetchRecords();
+    } catch (error) {
+      toast({
+        status: "error",
+        title: "Attendance update failed",
+        description: extractApiErrorMessage(error, "Please try again when online.")
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <VStack spacing={4} align="stretch">
+      <SimpleGrid columns={{ base: 2, xl: 4 }} spacing={3}>
+        <Box p={3} bg="white" borderRadius="12px" border="1px solid rgba(132, 79, 52, 0.2)">
+          <Text color="#725D53" fontSize="sm" fontWeight={700}>
+            Total Records
+          </Text>
+          <Text fontWeight={900} fontSize="2xl">
+            {summary.totalRecords}
+          </Text>
+        </Box>
+        <Box p={3} bg="white" borderRadius="12px" border="1px solid rgba(132, 79, 52, 0.2)">
+          <Text color="#725D53" fontSize="sm" fontWeight={700}>
+            Active Hours
+          </Text>
+          <Text fontWeight={900} fontSize="2xl">
+            {summary.activeHours}h
+          </Text>
+        </Box>
+        <Box p={3} bg="white" borderRadius="12px" border="1px solid rgba(132, 79, 52, 0.2)">
+          <Text color="#725D53" fontSize="sm" fontWeight={700}>
+            Break Hours
+          </Text>
+          <Text fontWeight={900} fontSize="2xl">
+            {summary.breakHours}h
+          </Text>
+        </Box>
+        <Box p={3} bg="white" borderRadius="12px" border="1px solid rgba(132, 79, 52, 0.2)">
+          <Text color="#725D53" fontSize="sm" fontWeight={700}>
+            Total Hours
+          </Text>
+          <Text fontWeight={900} fontSize="2xl">
+            {summary.totalHours}h
+          </Text>
+        </Box>
+      </SimpleGrid>
+
+      <Box p={4} bg="white" borderRadius="14px" border="1px solid rgba(132, 79, 52, 0.2)">
+        <Text fontWeight={800} mb={3}>
+          Punch In / Punch Out
+        </Text>
+        <SimpleGrid columns={{ base: 1, lg: 4 }} spacing={3}>
+          <FormControl>
+            <FormLabel fontWeight={700}>Username</FormLabel>
+            <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
+          </FormControl>
+          <FormControl>
+            <FormLabel fontWeight={700}>Password</FormLabel>
+            <Input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Password"
+              type="password"
+            />
+          </FormControl>
+          <Box>
+            <Text fontWeight={700} mb={2}>
+              Shift State
+            </Text>
+            <Box
+              px={3}
+              py={1.5}
+              borderRadius="full"
+              display="inline-flex"
+              bg={hasOpenSession ? "green.100" : "orange.100"}
+              color={hasOpenSession ? "green.700" : "#8A5400"}
+              fontWeight={700}
+              fontSize="sm"
+            >
+              {hasOpenSession ? "Punched In" : "Punched Out"}
+            </Box>
+          </Box>
+          <Box alignSelf="end">
+            <Button
+              w="full"
+              color="white"
+              bgGradient={
+                hasOpenSession
+                  ? "linear(95deg, #8E0909 0%, #BE3329 44%, #D3A23D 100%)"
+                  : "linear(95deg, #136f39 0%, #1f9d58 48%, #6cbc4c 100%)"
+              }
+              _hover={{
+                bgGradient: hasOpenSession
+                  ? "linear(95deg, #7A0707 0%, #A12822 44%, #B98B34 100%)"
+                  : "linear(95deg, #0f5d30 0%, #19844a 48%, #5cae42 100%)"
+              }}
+              isLoading={actionLoading}
+              loadingText={hasOpenSession ? "Punching out..." : "Punching in..."}
+              onClick={() => void submitPunch()}
+            >
+              {hasOpenSession ? "Punch Out" : "Punch In"}
+            </Button>
+          </Box>
+        </SimpleGrid>
+      </Box>
+
+      <Box p={4} bg="white" borderRadius="14px" border="1px solid rgba(132, 79, 52, 0.2)">
+        <HStack justify="space-between" mb={4} flexWrap="wrap" gap={3}>
+          <HStack spacing={3}>
+            <FormControl w="190px">
+              <FormLabel fontWeight={700}>Date</FormLabel>
+              <Input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
+            </FormControl>
+            <FormControl w="180px">
+              <FormLabel fontWeight={700}>Records per page</FormLabel>
+              <Select
+                value={String(limit)}
+                onChange={(event) => {
+                  setLimit(Number(event.target.value) || 5);
+                }}
+              >
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="20">20</option>
+              </Select>
+            </FormControl>
+          </HStack>
+          <Button variant="outline" onClick={() => void fetchRecords()}>
+            Refresh
+          </Button>
+        </HStack>
+
+        {isCacheData ? (
+          <Box
+            mb={3}
+            px={3}
+            py={2}
+            borderRadius="10px"
+            bg="orange.50"
+            border="1px solid"
+            borderColor="orange.200"
+          >
+            <Text color="orange.700" fontWeight={600} fontSize="sm">
+              Offline mode: showing last synced attendance records.
+            </Text>
+          </Box>
+        ) : null}
+
+        <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflow="hidden">
+          <Table variant="simple">
+            <Thead bg="#FFF8EE">
+              <Tr>
+                <Th>Punch In</Th>
+                <Th>Punch Out</Th>
+                <Th>Active</Th>
+                <Th>Break</Th>
+                <Th>Total</Th>
+                <Th>Status</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {loading ? (
+                <Tr>
+                  <Td colSpan={6}>
+                    <Text color="#6D584E">Loading attendance records...</Text>
+                  </Td>
+                </Tr>
+              ) : records.length ? (
+                records.map((row) => (
+                  <Tr key={row.id}>
+                    <Td>{dateTimeFormatter.format(new Date(row.punchInAt))}</Td>
+                    <Td>{row.punchOutAt ? dateTimeFormatter.format(new Date(row.punchOutAt)) : "Open Session"}</Td>
+                    <Td>{formatMinutesAsHours(row.activeMinutes)}</Td>
+                    <Td>{formatMinutesAsHours(row.breakMinutes)}</Td>
+                    <Td>{formatMinutesAsHours(row.totalMinutes)}</Td>
+                    <Td>
+                      <Box
+                        px={3}
+                        py={1}
+                        borderRadius="full"
+                        display="inline-flex"
+                        bg={row.status === "punched_in" ? "green.100" : "orange.100"}
+                        color={row.status === "punched_in" ? "green.700" : "#8A5400"}
+                        fontWeight={700}
+                        fontSize="sm"
+                      >
+                        {row.status === "punched_in" ? "Punched In" : "Punched Out"}
+                      </Box>
+                    </Td>
+                  </Tr>
+                ))
+              ) : (
+                <Tr>
+                  <Td colSpan={6}>
+                    <Text color="#6D584E">No attendance records for the selected date.</Text>
+                  </Td>
+                </Tr>
+              )}
+            </Tbody>
+          </Table>
+        </Box>
+
+        <HStack justify="space-between" mt={4}>
+          <Text color="#6D584E" fontSize="sm">
+            Showing {records.length} of {total} records
+          </Text>
+          <HStack>
+            <Button size="sm" variant="outline" isDisabled={page <= 1} onClick={() => setPage((current) => current - 1)}>
+              Previous
+            </Button>
+            <Text fontWeight={700}>
+              Page {page} of {totalPages}
+            </Text>
+            <Button
+              size="sm"
+              variant="outline"
+              isDisabled={page >= totalPages}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next
+            </Button>
+          </HStack>
+        </HStack>
+      </Box>
+    </VStack>
+  );
+};

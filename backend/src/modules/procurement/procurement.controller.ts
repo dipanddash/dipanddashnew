@@ -128,6 +128,11 @@ export class ProcurementController {
     return sendSuccess(res, StatusCodes.CREATED, "Purchase order created successfully", { purchaseOrder });
   };
 
+  updatePurchaseOrder = async (req: Request, res: Response): Promise<Response> => {
+    const purchaseOrder = await this.procurementService.updatePurchaseOrder(req.params.id, req.body);
+    return sendSuccess(res, StatusCodes.OK, "Purchase order updated successfully", { purchaseOrder });
+  };
+
   getMeta = async (req: Request, res: Response): Promise<Response> => {
     const data = await this.procurementService.getMeta({
       date: typeof req.query.date === "string" ? req.query.date : undefined,

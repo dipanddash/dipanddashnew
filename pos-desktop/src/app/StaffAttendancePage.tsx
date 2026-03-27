@@ -4,16 +4,21 @@ import {
   FormControl,
   FormLabel,
   HStack,
+  IconButton,
   Input,
+  InputGroup,
+  InputRightElement,
   Select,
   SimpleGrid,
   Text,
   VStack,
   useToast
 } from "@chakra-ui/react";
+import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { attendanceService } from "@/services/attendance.service";
+import { usePos } from "@/app/PosContext";
 import { usePosAuth } from "@/app/PosAuthContext";
 import { PosDataTable, type PosTableColumn } from "@/components/common/PosDataTable";
 import type { AttendanceRecord, AttendanceSummary } from "@/types/attendance";
@@ -46,6 +51,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-IN", {
 export const StaffAttendancePage = () => {
   const toast = useToast();
   const { session } = usePosAuth();
+  const { isPunchedIn, refreshShiftStatus } = usePos();
 
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [summary, setSummary] = useState<AttendanceSummary>(defaultSummary);
@@ -59,12 +65,16 @@ export const StaffAttendancePage = () => {
   const [loading, setLoading] = useState(true);
   const [isCacheData, setIsCacheData] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     setUsername(session?.username ?? "");
   }, [session?.username]);
 
-  const hasOpenSession = useMemo(() => records.some((record) => record.status === "punched_in"), [records]);
+  const hasOpenSession = useMemo(
+    () => (typeof isPunchedIn === "boolean" ? isPunchedIn : records.some((record) => record.status === "punched_in")),
+    [isPunchedIn, records]
+  );
 
   const attendanceColumns = useMemo<PosTableColumn<AttendanceRecord>[]>(
     () => [
@@ -145,6 +155,10 @@ export const StaffAttendancePage = () => {
   }, [fetchRecords]);
 
   useEffect(() => {
+    void refreshShiftStatus();
+  }, [refreshShiftStatus]);
+
+  useEffect(() => {
     setPage(1);
   }, [dateFilter, limit]);
 
@@ -168,7 +182,7 @@ export const StaffAttendancePage = () => {
         title: response.message
       });
       setPassword("");
-      await fetchRecords();
+      await Promise.all([fetchRecords(), refreshShiftStatus()]);
     } catch (error) {
       toast({
         status: "error",
@@ -228,12 +242,23 @@ export const StaffAttendancePage = () => {
           </FormControl>
           <FormControl>
             <FormLabel fontWeight={700}>Password</FormLabel>
-            <Input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-              type="password"
-            />
+            <InputGroup>
+              <Input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                type={showPassword ? "text" : "password"}
+              />
+              <InputRightElement>
+                <IconButton
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  variant="ghost"
+                  size="sm"
+                  icon={showPassword ? <FiEyeOff /> : <FiEye />}
+                  onClick={() => setShowPassword((previous) => !previous)}
+                />
+              </InputRightElement>
+            </InputGroup>
           </FormControl>
           <Box>
             <Text fontWeight={700} mb={2}>

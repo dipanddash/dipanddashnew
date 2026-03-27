@@ -12,6 +12,9 @@ export class Supplier {
   @Column({ type: "varchar", length: 140 })
   name!: string;
 
+  @Column({ type: "varchar", length: 160, nullable: true })
+  storeName!: string | null;
+
   @Column({ type: "varchar", length: 20 })
   phone!: string;
 

@@ -7,6 +7,7 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const supplierBodySchema = z.object({
   name: z.string().trim().min(2, "Supplier name must be at least 2 characters").max(140),
+  storeName: z.string().trim().min(2, "Store name must be at least 2 characters").max(160).optional(),
   phone: z.string().trim().min(7, "Phone number is too short").max(20),
   address: z.string().trim().max(500).optional(),
   isActive: z.boolean().optional()
@@ -126,6 +127,19 @@ const purchaseLineSchema = z
   });
 
 export const createPurchaseOrderSchema = z.object({
+  body: z.object({
+    supplierId: z.string().uuid("Invalid supplier id"),
+    purchaseDate: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
+    note: z.string().trim().max(500).optional(),
+    invoiceImageUrl: z.string().trim().max(600, "Invoice image URL is too long").optional(),
+    lines: z.array(purchaseLineSchema).min(1, "At least one purchase line is required")
+  })
+});
+
+export const updatePurchaseOrderSchema = z.object({
+  params: z.object({
+    id: z.string().uuid("Invalid purchase order id")
+  }),
   body: z.object({
     supplierId: z.string().uuid("Invalid supplier id"),
     purchaseDate: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),

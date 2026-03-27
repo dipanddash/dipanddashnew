@@ -73,12 +73,13 @@ type SupplierFormModalProps = {
   onClose: () => void;
   initialData: SupplierListItem | null;
   loading: boolean;
-  onSubmit: (payload: { name: string; phone: string; address?: string; isActive: boolean }) => Promise<void>;
+  onSubmit: (payload: { name: string; storeName?: string; phone: string; address?: string; isActive: boolean }) => Promise<void>;
 };
 
 const SupplierFormModal = ({ isOpen, onClose, initialData, loading, onSubmit }: SupplierFormModalProps) => {
   const { isCloseConfirmOpen, requestClose, cancelCloseRequest, confirmClose } = useModalCloseGuard(onClose);
   const [name, setName] = useState("");
+  const [storeName, setStoreName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [isActive, setIsActive] = useState(true);
@@ -88,6 +89,7 @@ const SupplierFormModal = ({ isOpen, onClose, initialData, loading, onSubmit }: 
       return;
     }
     setName(initialData?.name ?? "");
+    setStoreName(initialData?.storeName ?? "");
     setPhone(initialData?.phone ?? "");
     setAddress(initialData?.address ?? "");
     setIsActive(initialData?.isActive ?? true);
@@ -96,6 +98,7 @@ const SupplierFormModal = ({ isOpen, onClose, initialData, loading, onSubmit }: 
   const handleSubmit = async () => {
     await onSubmit({
       name: name.trim(),
+      storeName: storeName.trim() || undefined,
       phone: phone.trim(),
       address: address.trim() || undefined,
       isActive
@@ -112,6 +115,11 @@ const SupplierFormModal = ({ isOpen, onClose, initialData, loading, onSubmit }: 
           <ModalBody>
             <VStack spacing={4} align="stretch">
               <AppInput label="Supplier Name" value={name} onChange={(event) => setName((event.target as HTMLInputElement).value)} />
+              <AppInput
+                label="Supplier Store Name"
+                value={storeName}
+                onChange={(event) => setStoreName((event.target as HTMLInputElement).value)}
+              />
               <AppInput label="Phone Number" value={phone} onChange={(event) => setPhone((event.target as HTMLInputElement).value)} />
               <AppInput label="Address" value={address} onChange={(event) => setAddress((event.target as HTMLInputElement).value)} />
               <FormControl display="flex" alignItems="center" justifyContent="space-between">
@@ -216,6 +224,7 @@ export const SuppliersPage = () => {
 
   const handleSubmitSupplier = async (payload: {
     name: string;
+    storeName?: string;
     phone: string;
     address?: string;
     isActive: boolean;
@@ -266,7 +275,7 @@ export const SuppliersPage = () => {
           <Box>
             <Text fontWeight={800}>{row.name}</Text>
             <Text fontSize="sm" color="#7A6359">
-              {row.phone}
+              {row.storeName ? `${row.storeName} | ${row.phone}` : row.phone}
             </Text>
           </Box>
         )

@@ -150,7 +150,7 @@ const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
   },
   tables: {
     title: "Tables",
-    subtitle: "Track dine-in pending tables and resume billing fast."
+    subtitle: ""
   },
   kitchen: {
     title: "Kitchen",

@@ -122,6 +122,7 @@ type PurchaseOrderModalProps = {
   onClose: () => void;
   loading: boolean;
   meta: ProcurementMetaResponse | null;
+  initialData: PurchaseOrderDetail | null;
   onLoadMetaForDate: (date: string) => Promise<void>;
   onSubmit: (
     payload: CreatePurchaseOrderInput & {
@@ -135,28 +136,65 @@ const PurchaseOrderModal = ({
   onClose,
   loading,
   meta,
+  initialData,
   onLoadMetaForDate,
   onSubmit
 }: PurchaseOrderModalProps) => {
+  const isEditMode = Boolean(initialData);
   const { isCloseConfirmOpen, requestClose, cancelCloseRequest, confirmClose } = useModalCloseGuard(onClose);
   const [supplierId, setSupplierId] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(getTodayDate());
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<DraftPurchaseLine[]>([createEmptyLine()]);
   const [invoiceImageFile, setInvoiceImageFile] = useState<File | null>(null);
+  const [invoiceImageUrl, setInvoiceImageUrl] = useState<string | undefined>(undefined);
   const [invoicePreviewUrl, setInvoicePreviewUrl] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
+    if (initialData) {
+      const nextDate = initialData.purchaseDate || getTodayDate();
+      setSupplierId(initialData.supplierId);
+      setPurchaseDate(nextDate);
+      setNote(initialData.note ?? "");
+      setInvoiceImageFile(null);
+      setInvoiceImageUrl(initialData.invoiceImageUrl ?? undefined);
+      setInvoicePreviewUrl(initialData.invoiceImageUrl ?? "");
+      setLines(
+        initialData.lines.map((line) => {
+          const matchedIngredient = line.ingredientId
+            ? (meta?.ingredients ?? []).find((ingredient) => ingredient.id === line.ingredientId)
+            : undefined;
+
+          return {
+            id: createDraftLineId(),
+            lineType: line.lineType,
+            ingredientCategoryId: matchedIngredient?.categoryId ?? "",
+            ingredientId: line.ingredientId ?? "",
+            productId: line.productId ?? "",
+            quantity: String(line.stockAdded),
+            unitPrice: String(line.unitPrice),
+            updateUnitPrice: line.unitPriceUpdated,
+            note: ""
+          };
+        })
+      );
+      void onLoadMetaForDate(nextDate);
+      return;
+    }
+
+    const nextDate = meta?.date ?? getTodayDate();
     setSupplierId(meta?.suppliers[0]?.id ?? "");
-    setPurchaseDate(meta?.date ?? getTodayDate());
+    setPurchaseDate(nextDate);
     setNote("");
     setLines([createEmptyLine()]);
     setInvoiceImageFile(null);
+    setInvoiceImageUrl(undefined);
     setInvoicePreviewUrl("");
-  }, [isOpen, meta?.date, meta?.suppliers]);
+    void onLoadMetaForDate(nextDate);
+  }, [initialData, isOpen, onLoadMetaForDate]);
 
   useEffect(() => {
     return () => {
@@ -264,12 +302,14 @@ const PurchaseOrderModal = ({
 
     if (!nextFile) {
       setInvoiceImageFile(null);
+      setInvoiceImageUrl("");
       setInvoicePreviewUrl("");
       return;
     }
 
     const previewUrl = URL.createObjectURL(nextFile);
     setInvoiceImageFile(nextFile);
+    setInvoiceImageUrl(undefined);
     setInvoicePreviewUrl(previewUrl);
   };
 
@@ -301,6 +341,7 @@ const PurchaseOrderModal = ({
       supplierId,
       purchaseDate,
       note: note.trim() || undefined,
+      invoiceImageUrl,
       lines: payloadLines,
       invoiceImageFile
     });
@@ -308,12 +349,27 @@ const PurchaseOrderModal = ({
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={requestClose} size="6xl" closeOnOverlayClick={false} closeOnEsc={false}>
+      <Modal
+        isOpen={isOpen}
+        onClose={requestClose}
+        size={{ base: "full", lg: "6xl" }}
+        isCentered
+        scrollBehavior="inside"
+        closeOnOverlayClick={false}
+        closeOnEsc={false}
+      >
         <ModalOverlay />
-        <ModalContent borderRadius="20px">
-          <ModalHeader>Create Purchase Order</ModalHeader>
+        <ModalContent
+          borderRadius="20px"
+          maxH={{ base: "calc(100vh - 0.75rem)", md: "calc(100vh - 2rem)" }}
+          my={{ base: 1, md: 4 }}
+          display="flex"
+          flexDirection="column"
+          overflow="hidden"
+        >
+          <ModalHeader>{isEditMode ? "Edit Purchase Order" : "Create Purchase Order"}</ModalHeader>
           <ModalCloseButton />
-          <ModalBody>
+          <ModalBody pr={{ base: 1, md: 2 }} pb={6}>
             <VStack spacing={4} align="stretch">
               <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
                 <AppSearchableSelect
@@ -523,7 +579,17 @@ const PurchaseOrderModal = ({
               </FormControl>
             </VStack>
           </ModalBody>
-          <ModalFooter gap={3}>
+          <ModalFooter
+            gap={3}
+            borderTop="1px solid"
+            borderColor="rgba(133, 78, 48, 0.18)"
+            bg="#fffaf2"
+            pt={4}
+            pb={4}
+            px={{ base: 4, md: 6 }}
+            flexWrap="wrap"
+            justifyContent="flex-end"
+          >
             <AppButton variant="outline" onClick={requestClose}>
               Cancel
             </AppButton>
@@ -532,7 +598,7 @@ const PurchaseOrderModal = ({
               isLoading={loading}
               isDisabled={!supplierId || lines.some((line) => !line.quantity || !line.unitPrice)}
             >
-              Create Purchase Order
+              {isEditMode ? "Save Purchase Order" : "Create Purchase Order"}
             </AppButton>
           </ModalFooter>
         </ModalContent>
@@ -758,6 +824,7 @@ export const PurchasePage = () => {
     totalProductPurchasedQuantity: 0,
     totalProductPurchasedAmount: 0
   });
+  const [recentPurchases, setRecentPurchases] = useState<ProcurementStatsResponse["recentPurchases"]>([]);
 
   const [orderRows, setOrderRows] = useState<PurchaseOrderSummary[]>([]);
   const [orderPagination, setOrderPagination] = useState(defaultPagination);
@@ -793,6 +860,7 @@ export const PurchasePage = () => {
 
   const [mutationLoading, setMutationLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrderDetail | null>(null);
+  const [editingOrder, setEditingOrder] = useState<PurchaseOrderDetail | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ProductListItem | null>(null);
 
   const orderModal = useDisclosure();
@@ -837,6 +905,7 @@ export const PurchasePage = () => {
         dateTo: dateTo || undefined
       });
       setStats(response.data.summary);
+      setRecentPurchases(response.data.recentPurchases);
     } catch (error) {
       toast.error("Unable to fetch purchase stats", extractErrorMessage(error));
     }
@@ -926,6 +995,11 @@ export const PurchasePage = () => {
     productModal.onOpen();
   };
 
+  const openCreateOrder = () => {
+    setEditingOrder(null);
+    orderModal.onOpen();
+  };
+
   const openEditProduct = (row: ProductListItem) => {
     setSelectedProduct(row);
     productModal.onOpen();
@@ -936,7 +1010,17 @@ export const PurchasePage = () => {
     deleteProductDialog.onOpen();
   };
 
-  const handleCreateOrder = async (
+  const openEditOrder = async (row: PurchaseOrderSummary) => {
+    try {
+      const response = await procurementService.getPurchaseOrderById(row.id);
+      setEditingOrder(response.data.purchaseOrder);
+      orderModal.onOpen();
+    } catch (error) {
+      toast.error("Unable to load purchase for editing", extractErrorMessage(error));
+    }
+  };
+
+  const handleSaveOrder = async (
     payload: CreatePurchaseOrderInput & {
       invoiceImageFile?: File | null;
     }
@@ -951,15 +1035,27 @@ export const PurchasePage = () => {
         invoiceImageUrl = uploadResponse.data.imageUrl;
       }
 
-      await procurementService.createPurchaseOrder({
-        ...createPayload,
-        invoiceImageUrl
-      });
-      toast.success("Purchase order created successfully");
+      if (editingOrder) {
+        await procurementService.updatePurchaseOrder(editingOrder.id, {
+          ...createPayload,
+          invoiceImageUrl
+        });
+        toast.success("Purchase order updated successfully");
+      } else {
+        await procurementService.createPurchaseOrder({
+          ...createPayload,
+          invoiceImageUrl
+        });
+        toast.success("Purchase order created successfully");
+      }
       orderModal.onClose();
+      setEditingOrder(null);
       await Promise.all([loadOrders(), loadProducts(), loadStats(), loadMeta(payload.purchaseDate)]);
     } catch (error) {
-      toast.error("Unable to create purchase order", extractErrorMessage(error));
+      toast.error(
+        editingOrder ? "Unable to update purchase order" : "Unable to create purchase order",
+        extractErrorMessage(error)
+      );
     } finally {
       setMutationLoading(false);
     }
@@ -1014,17 +1110,26 @@ export const PurchasePage = () => {
     }
   };
 
+  const latestPurchase = recentPurchases[0] ?? null;
+
   return (
-    <VStack spacing={5} align="stretch">
+    <VStack spacing={5} align="stretch" w="full" minW={0}>
       <PageHeader title="Purchase" subtitle="Manage supplier purchases, ingredient restocking and packaged products." />
 
-      <SimpleGrid columns={{ base: 2, lg: 6 }} spacing={3}>
+      <SimpleGrid minChildWidth={{ base: "150px", md: "200px", xl: "220px" }} spacing={3}>
         <AppCard p={4}><Text fontSize="sm" color="#7B645B">Purchase Orders</Text><Text fontSize="2xl" fontWeight={900}>{stats.totalPurchaseOrders}</Text></AppCard>
         <AppCard p={4}><Text fontSize="sm" color="#7B645B">Purchase Amount</Text><Text fontSize="2xl" fontWeight={900}>{formatCurrency(stats.totalPurchaseAmount)}</Text></AppCard>
         <AppCard p={4}><Text fontSize="sm" color="#7B645B">Suppliers</Text><Text fontSize="2xl" fontWeight={900}>{stats.totalSuppliers}</Text></AppCard>
         <AppCard p={4}><Text fontSize="sm" color="#7B645B">Products</Text><Text fontSize="2xl" fontWeight={900}>{stats.totalProducts}</Text></AppCard>
-        <AppCard p={4}><Text fontSize="sm" color="#7B645B">Purchased Qty</Text><Text fontSize="2xl" fontWeight={900}>{stats.totalProductPurchasedQuantity}</Text></AppCard>
-        <AppCard p={4}><Text fontSize="sm" color="#7B645B">Product Spend</Text><Text fontSize="2xl" fontWeight={900}>{formatCurrency(stats.totalProductPurchasedAmount)}</Text></AppCard>
+        <AppCard p={4}>
+          <Text fontSize="sm" color="#7B645B">Last Bill Amount</Text>
+          <Text fontSize="2xl" fontWeight={900}>
+            {latestPurchase ? formatCurrency(latestPurchase.totalAmount) : "-"}
+          </Text>
+          <Text mt={1} fontSize="xs" color="#7B645B">
+            {latestPurchase ? latestPurchase.purchaseNumber : "No bill yet"}
+          </Text>
+        </AppCard>
       </SimpleGrid>
 
       <Tabs variant="soft-rounded" colorScheme="brand" index={activeTabIndex} onChange={setActiveTabIndex}>
@@ -1034,14 +1139,15 @@ export const PurchasePage = () => {
           justifyContent="space-between"
           alignItems={{ base: "stretch", lg: "center" }}
           gap={3}
+          minW={0}
         >
-          <TabList gap={3}>
+          <TabList gap={3} flexWrap="wrap">
             <Tab>Purchase Orders</Tab>
             <Tab>Products</Tab>
           </TabList>
           <AppButton
             leftIcon={<Plus size={16} />}
-            onClick={activeTabIndex === 0 ? orderModal.onOpen : openCreateProduct}
+            onClick={activeTabIndex === 0 ? openCreateOrder : openCreateProduct}
             alignSelf={{ base: "stretch", lg: "flex-end" }}
             minW={{ lg: "170px" }}
             whiteSpace="nowrap"
@@ -1052,16 +1158,8 @@ export const PurchasePage = () => {
         <TabPanels pt={4}>
           <TabPanel px={0}>
             <AppCard>
-              <Grid
-                templateColumns={{
-                  base: "1fr",
-                  md: "repeat(2, minmax(0, 1fr))",
-                  xl: "minmax(250px, 1.7fr) minmax(230px, 1.5fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(130px, 0.8fr)"
-                }}
-                gap={3}
-                alignItems="end"
-              >
-                <GridItem>
+              <SimpleGrid columns={{ base: 1, md: 2, xl: 3, "2xl": 5 }} spacing={3} alignItems="end" minW={0}>
+                <GridItem minW={0}>
                   <AppInput
                     label="Search"
                     placeholder="Search purchase number or supplier"
@@ -1069,7 +1167,7 @@ export const PurchasePage = () => {
                     onChange={(event) => setOrderSearch((event.target as HTMLInputElement).value)}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <AppSearchableSelect
                     label="Supplier"
                     value={orderSupplierFilter}
@@ -1077,7 +1175,7 @@ export const PurchasePage = () => {
                     onValueChange={setOrderSupplierFilter}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <AppInput
                     label="From Date"
                     type="date"
@@ -1085,7 +1183,7 @@ export const PurchasePage = () => {
                     onChange={(event) => setDateFrom((event.target as HTMLInputElement).value)}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <AppInput
                     label="To Date"
                     type="date"
@@ -1093,7 +1191,7 @@ export const PurchasePage = () => {
                     onChange={(event) => setDateTo((event.target as HTMLInputElement).value)}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <FormControl>
                     <FormLabel>Rows per page</FormLabel>
                     <Select
@@ -1109,9 +1207,9 @@ export const PurchasePage = () => {
                     </Select>
                   </FormControl>
                 </GridItem>
-              </Grid>
+              </SimpleGrid>
 
-              <Box mt={4}>
+              <Box mt={4} minW={0}>
                 {ordersLoading ? (
                   <SkeletonTable rows={5} />
                 ) : (
@@ -1120,10 +1218,48 @@ export const PurchasePage = () => {
                       { key: "purchaseNumber", header: "Purchase No", render: (row: PurchaseOrderSummary) => <Text fontWeight={800}>{row.purchaseNumber}</Text> },
                       { key: "supplierName", header: "Supplier", render: (row: PurchaseOrderSummary) => row.supplierName },
                       { key: "purchaseDate", header: "Date", render: (row: PurchaseOrderSummary) => formatDate(row.purchaseDate) },
-                      { key: "purchaseType", header: "Type", render: (row: PurchaseOrderSummary) => row.purchaseType.toUpperCase() },
-                      { key: "lineCount", header: "Lines", render: (row: PurchaseOrderSummary) => row.lineCount },
+                      {
+                        key: "lineCount",
+                        header: "Total Items",
+                        render: (row: PurchaseOrderSummary) => (
+                          <Box>
+                            <Text fontSize="sm" color="#7A6359">
+                              Ingredients: {row.ingredientLineCount ?? 0} | Products: {row.productLineCount ?? 0}
+                            </Text>
+                          </Box>
+                        )
+                      },
                       { key: "totalAmount", header: "Total", render: (row: PurchaseOrderSummary) => formatCurrency(row.totalAmount) },
-                      { key: "action", header: "Action", render: (row: PurchaseOrderSummary) => <ActionIconButton aria-label="View details" tooltip="View details" icon={<Eye size={16} />} variant="outline" onClick={() => void procurementService.getPurchaseOrderById(row.id).then((response) => { setSelectedOrder(response.data.purchaseOrder); orderDetailModal.onOpen(); }).catch((error) => toast.error("Unable to load purchase detail", extractErrorMessage(error)))} /> }
+                      {
+                        key: "action",
+                        header: "Action",
+                        render: (row: PurchaseOrderSummary) => (
+                          <HStack spacing={2}>
+                            <ActionIconButton
+                              aria-label="View details"
+                              tooltip="View details"
+                              icon={<Eye size={16} />}
+                              variant="outline"
+                              onClick={() =>
+                                void procurementService
+                                  .getPurchaseOrderById(row.id)
+                                  .then((response) => {
+                                    setSelectedOrder(response.data.purchaseOrder);
+                                    orderDetailModal.onOpen();
+                                  })
+                                  .catch((error) => toast.error("Unable to load purchase detail", extractErrorMessage(error)))
+                              }
+                            />
+                            <ActionIconButton
+                              aria-label="Edit purchase order"
+                              tooltip="Edit purchase order"
+                              icon={<Edit2 size={16} />}
+                              variant="outline"
+                              onClick={() => void openEditOrder(row)}
+                            />
+                          </HStack>
+                        )
+                      }
                     ]}
                     rows={orderRows}
                     emptyState={<EmptyState title="No purchase orders found" description="Create a new purchase order to restock ingredients and products." />}
@@ -1131,9 +1267,9 @@ export const PurchasePage = () => {
                 )}
               </Box>
 
-              <HStack justify="space-between" mt={4}>
+              <HStack justify="space-between" mt={4} flexWrap="wrap" gap={3}>
                 <Text color="#6F594F" fontSize="sm">Showing {orderRows.length} of {orderPagination.total} records</Text>
-                <HStack>
+                <HStack flexWrap="wrap">
                   <AppButton variant="outline" isDisabled={orderPage <= 1} onClick={() => setOrderPage((prev) => prev - 1)}>Previous</AppButton>
                   <Text fontWeight={700}>Page {orderPagination.page} of {orderPagination.totalPages}</Text>
                   <AppButton variant="outline" isDisabled={orderPagination.page >= orderPagination.totalPages} onClick={() => setOrderPage((prev) => prev + 1)}>Next</AppButton>
@@ -1145,16 +1281,8 @@ export const PurchasePage = () => {
 
           <TabPanel px={0}>
             <AppCard>
-              <Grid
-                templateColumns={{
-                  base: "1fr",
-                  md: "repeat(2, minmax(0, 1fr))",
-                  xl: "minmax(250px, 1.5fr) minmax(230px, 1.2fr) minmax(230px, 1.2fr) minmax(140px, 0.8fr)"
-                }}
-                gap={3}
-                alignItems="end"
-              >
-                <GridItem>
+              <SimpleGrid columns={{ base: 1, md: 2, "2xl": 4 }} spacing={3} alignItems="end" minW={0}>
+                <GridItem minW={0}>
                   <AppInput
                     label="Search Product"
                     placeholder="Search name, sku, pack size"
@@ -1162,7 +1290,7 @@ export const PurchasePage = () => {
                     onChange={(event) => setProductSearch((event.target as HTMLInputElement).value)}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <AppSearchableSelect
                     label="Category"
                     value={productCategoryFilter}
@@ -1170,7 +1298,7 @@ export const PurchasePage = () => {
                     onValueChange={setProductCategoryFilter}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <AppSearchableSelect
                     label="Supplier"
                     value={productSupplierFilter}
@@ -1178,7 +1306,7 @@ export const PurchasePage = () => {
                     onValueChange={setProductSupplierFilter}
                   />
                 </GridItem>
-                <GridItem>
+                <GridItem minW={0}>
                   <FormControl>
                     <FormLabel>Rows per page</FormLabel>
                     <Select
@@ -1194,9 +1322,9 @@ export const PurchasePage = () => {
                     </Select>
                   </FormControl>
                 </GridItem>
-              </Grid>
+              </SimpleGrid>
 
-              <SimpleGrid mt={4} columns={{ base: 2, lg: 5 }} spacing={3}>
+              <SimpleGrid mt={4} minChildWidth={{ base: "150px", md: "180px", xl: "200px" }} spacing={3}>
                 <AppCard p={3}><Text fontSize="xs" color="#7B645B">Total Products</Text><Text fontSize="xl" fontWeight={900}>{productStats.totalProducts}</Text></AppCard>
                 <AppCard p={3}><Text fontSize="xs" color="#7B645B">Low Stock</Text><Text fontSize="xl" fontWeight={900} color="#B91C1C">{productStats.lowStockProducts}</Text></AppCard>
                 <AppCard p={3}><Text fontSize="xs" color="#7B645B">Stock Valuation</Text><Text fontSize="xl" fontWeight={900}>{formatCurrency(productStats.stockValuation)}</Text></AppCard>
@@ -1252,9 +1380,9 @@ export const PurchasePage = () => {
                 )}
               </Box>
 
-              <HStack justify="space-between" mt={4}>
+              <HStack justify="space-between" mt={4} flexWrap="wrap" gap={3}>
                 <Text color="#6F594F" fontSize="sm">Showing {productRows.length} of {productPagination.total} records</Text>
-                <HStack>
+                <HStack flexWrap="wrap">
                   <AppButton variant="outline" isDisabled={productPage <= 1} onClick={() => setProductPage((prev) => prev - 1)}>Previous</AppButton>
                   <Text fontWeight={700}>Page {productPagination.page} of {productPagination.totalPages}</Text>
                   <AppButton variant="outline" isDisabled={productPagination.page >= productPagination.totalPages} onClick={() => setProductPage((prev) => prev + 1)}>Next</AppButton>
@@ -1267,11 +1395,15 @@ export const PurchasePage = () => {
 
       <PurchaseOrderModal
         isOpen={orderModal.isOpen}
-        onClose={orderModal.onClose}
+        onClose={() => {
+          orderModal.onClose();
+          setEditingOrder(null);
+        }}
         loading={mutationLoading}
         meta={meta}
+        initialData={editingOrder}
         onLoadMetaForDate={loadMeta}
-        onSubmit={handleCreateOrder}
+        onSubmit={handleSaveOrder}
       />
 
       <ProductFormModal

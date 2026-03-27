@@ -42,6 +42,11 @@ npm run dev
 npm run tauri:dev
 ```
 
+4. Clear all local POS data (keep DB + tables):
+```bash
+npm run db:reset-local
+```
+
 ## Notes
 
 - Backend endpoints already added in main backend app:
@@ -52,4 +57,3 @@ npm run tauri:dev
   - `/api/invoices/*`
 - This phase is intentionally focused on offline architecture + core billing flow foundation.
 - Next phase should add full invoice history screen, PDF/print pipeline, and richer counter/branch controls.
-

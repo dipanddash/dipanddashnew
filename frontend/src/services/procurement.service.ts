@@ -24,7 +24,7 @@ export const procurementService = {
     return response.data;
   },
 
-  createSupplier: async (payload: { name: string; phone: string; address?: string; isActive?: boolean }) => {
+  createSupplier: async (payload: { name: string; storeName?: string; phone: string; address?: string; isActive?: boolean }) => {
     const response = await apiClient.post<ApiSuccess<{ supplier: SupplierListItem }>>(
       "/procurement/suppliers",
       payload
@@ -34,7 +34,7 @@ export const procurementService = {
 
   updateSupplier: async (
     id: string,
-    payload: { name?: string; phone?: string; address?: string; isActive?: boolean }
+    payload: { name?: string; storeName?: string; phone?: string; address?: string; isActive?: boolean }
   ) => {
     const response = await apiClient.patch<ApiSuccess<{ supplier: SupplierListItem }>>(
       `/procurement/suppliers/${id}`,
@@ -128,6 +128,14 @@ export const procurementService = {
   createPurchaseOrder: async (payload: CreatePurchaseOrderInput) => {
     const response = await apiClient.post<ApiSuccess<{ purchaseOrder: PurchaseOrderDetail }>>(
       "/procurement/purchase-orders",
+      payload
+    );
+    return response.data;
+  },
+
+  updatePurchaseOrder: async (id: string, payload: CreatePurchaseOrderInput) => {
+    const response = await apiClient.patch<ApiSuccess<{ purchaseOrder: PurchaseOrderDetail }>>(
+      `/procurement/purchase-orders/${id}`,
       payload
     );
     return response.data;

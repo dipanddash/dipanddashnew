@@ -65,6 +65,7 @@ const buildNewPendingOrder = (
     serverInvoiceId: null,
     invoiceNumber: makeInvoiceNumber(),
     orderType: "snooker",
+    orderChannel: "snooker",
     tableLabel: booking.resourceLabel,
     kitchenStatus: "queued",
     status: "pending",
@@ -160,6 +161,7 @@ export const snookerOrderService = {
         ? {
             ...existing,
             orderType: "snooker",
+            orderChannel: "snooker",
             tableLabel: input.booking.resourceLabel,
             customer: buildCustomerSnapshot(input.booking),
             kitchenStatus: existing.kitchenStatus === "served" ? "queued" : existing.kitchenStatus,
@@ -187,6 +189,7 @@ export const snookerOrderService = {
         customerName: order.customer?.name ?? input.booking.primaryCustomerName,
         customerPhone: order.customer?.phone ?? input.booking.primaryCustomerPhone,
         orderType: order.orderType,
+        orderChannel: order.orderChannel,
         tableLabel: order.tableLabel,
         kitchenStatus: order.kitchenStatus,
         totalAmount: order.totals.totalAmount,

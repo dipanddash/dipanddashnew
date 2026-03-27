@@ -61,9 +61,6 @@ export const StaffTablesPage = ({ onResumeToBilling }: StaffTablesPageProps) => 
         <Text fontWeight={900} color="#2A1A14" fontSize="xl">
           Tables
         </Text>
-        <Text fontSize="sm" color="#705B52">
-          Dine-in pending orders with table mapping.
-        </Text>
       </VStack>
 
       <PosDataTable

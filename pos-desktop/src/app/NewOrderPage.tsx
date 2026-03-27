@@ -28,7 +28,7 @@ import { RecentBillsTableCard } from "@/components/pos/RecentBillsTableCard";
 import { usePosAuth } from "@/app/PosAuthContext";
 import { usePos } from "@/app/PosContext";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import type { CustomerRecord, PosOrder } from "@/types/pos";
+import type { CustomerRecord, PendingBillSummary, PosOrder } from "@/types/pos";
 import logo from "@/assets/logo.png";
 import {
   buildBillDocumentHtml,
@@ -59,6 +59,36 @@ const resolveOrderType = (channel: NewOrderPageProps["channel"]) => {
   }
 };
 
+const resolveOrderChannel = (channel: NewOrderPageProps["channel"]) => {
+  switch (channel) {
+    case "dine-in":
+      return "dine-in" as const;
+    case "take-away":
+      return "take-away" as const;
+    case "swiggy":
+      return "swiggy" as const;
+    case "zomato":
+      return "zomato" as const;
+    default:
+      return null;
+  }
+};
+
+const matchesPendingBillWithChannel = (bill: PendingBillSummary, channel: NewOrderPageProps["channel"]) => {
+  switch (channel) {
+    case "dine-in":
+      return bill.orderType === "dine_in" && (bill.orderChannel === "dine-in" || bill.orderChannel === null);
+    case "take-away":
+      return bill.orderType === "takeaway" && (bill.orderChannel === "take-away" || bill.orderChannel === null);
+    case "swiggy":
+      return bill.orderType === "delivery" && bill.orderChannel === "swiggy";
+    case "zomato":
+      return bill.orderType === "delivery" && bill.orderChannel === "zomato";
+    default:
+      return true;
+  }
+};
+
 const toPaymentModeLabel = (value: PosOrder["paymentMode"] | null | undefined) =>
   value ? value.toUpperCase() : "-";
 
@@ -72,11 +102,13 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     isBootstrapping,
     allocationWarning,
     closingStatus,
+    isPunchedIn,
     attachCustomer,
     addItem,
     addCombo,
     addProduct,
     setOrderType,
+    setOrderChannel,
     setTableLabel,
     addAddOnToLine,
     removeAddOnFromLine,
@@ -93,7 +125,8 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     searchCustomers,
     findCustomerByPhone,
     getOrderById,
-    clearAllocationWarning
+    clearAllocationWarning,
+    refreshCatalogSnapshot
   } = usePos();
 
   const paymentModal = useDisclosure();
@@ -104,22 +137,47 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
   const [isOrderFlowActive, setIsOrderFlowActive] = useState(
     () => Boolean(currentOrder.customer) && currentOrder.lines.length > 0
   );
+  const [isRefreshingStock, setIsRefreshingStock] = useState(false);
   const [customerModalPurpose, setCustomerModalPurpose] = useState<"start" | "change">("start");
   const [previewOrder, setPreviewOrder] = useState<PosOrder | null>(null);
+  const resolvedOrderType = useMemo(() => resolveOrderType(channel), [channel]);
+  const resolvedOrderChannel = useMemo(() => resolveOrderChannel(channel), [channel]);
+  const canChangeOrderType = !resolvedOrderType;
+  const filteredPendingBills = useMemo(
+    () => pendingBills.filter((bill) => matchesPendingBillWithChannel(bill, channel)),
+    [pendingBills, channel]
+  );
 
   useEffect(() => {
-    const resolved = resolveOrderType(channel);
-    const hasActiveDraft = Boolean(currentOrder.customer) || currentOrder.lines.length > 0;
-    if (hasActiveDraft) {
-      setIsOrderFlowActive(true);
+    clearOrder();
+    if (resolvedOrderType) {
+      setOrderType(resolvedOrderType);
+    }
+    setOrderChannel(resolvedOrderChannel);
+    setIsOrderFlowActive(false);
+  }, [
+    channel,
+    clearOrder,
+    resolvedOrderType,
+    resolvedOrderChannel,
+    setOrderChannel,
+    setOrderType
+  ]);
+
+  useEffect(() => {
+    if (!resolvedOrderType) {
       return;
     }
-    clearOrder();
-    if (resolved) {
-      setOrderType(resolved);
+    if (currentOrder.orderType !== resolvedOrderType) {
+      setOrderType(resolvedOrderType);
     }
-    setIsOrderFlowActive(false);
-  }, [channel, clearOrder, setOrderType]);
+  }, [currentOrder.orderType, resolvedOrderType, setOrderType]);
+
+  useEffect(() => {
+    if (currentOrder.orderChannel !== resolvedOrderChannel) {
+      setOrderChannel(resolvedOrderChannel);
+    }
+  }, [currentOrder.orderChannel, resolvedOrderChannel, setOrderChannel]);
 
   useEffect(() => {
     if (currentOrder.customer && currentOrder.lines.length > 0) {
@@ -188,27 +246,44 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
       return;
     }
 
+    if (isPunchedIn !== true) {
+      toast({
+        status: "warning",
+        title: "Punch in required",
+        description:
+          isPunchedIn === false
+            ? "You are currently punched out. Please punch in from Attendance before taking orders."
+            : "Unable to verify attendance state. Open Attendance and refresh your shift status before taking orders."
+      });
+      return;
+    }
+
     if (!hasAllocatedStock) {
       toast({
         status: "warning",
-        title: "Allocated stock missing",
+        title: "Admin stock allocation required",
         description:
-          "Admin must allocate ingredient stock before staff can take orders."
+          "No ingredient stock is allocated for today. You cannot take orders until admin allocates stock."
       });
       return;
     }
     const selectedOrderType = currentOrder.orderType;
+    const selectedOrderChannel = currentOrder.orderChannel;
     clearOrder();
     setOrderType(selectedOrderType);
+    setOrderChannel(selectedOrderChannel);
     setIsOrderFlowActive(true);
     openCustomerStartModal("start");
   }, [
     catalog,
     clearOrder,
     closingStatus,
+    currentOrder.orderChannel,
     currentOrder.orderType,
     hasAllocatedStock,
+    isPunchedIn,
     openCustomerStartModal,
+    setOrderChannel,
     setOrderType,
     toast
   ]);
@@ -263,6 +338,26 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     }
   }, [getOrderById, session?.fullName, toast]);
 
+  const handleRefreshStock = useCallback(async () => {
+    setIsRefreshingStock(true);
+    try {
+      await refreshCatalogSnapshot();
+      toast({
+        status: "success",
+        title: "Stock refreshed",
+        description: "Latest admin allocation has been loaded."
+      });
+    } catch {
+      toast({
+        status: "warning",
+        title: "Unable to refresh stock now",
+        description: "Please check network and try again."
+      });
+    } finally {
+      setIsRefreshingStock(false);
+    }
+  }, [refreshCatalogSnapshot, toast]);
+
   useKeyboardShortcuts([
     {
       key: "n",
@@ -287,17 +382,32 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     {
       key: "1",
       ctrl: true,
-      action: () => setOrderType("takeaway")
+      action: () => {
+        if (!canChangeOrderType) {
+          return;
+        }
+        setOrderType("takeaway");
+      }
     },
     {
       key: "2",
       ctrl: true,
-      action: () => setOrderType("dine_in")
+      action: () => {
+        if (!canChangeOrderType) {
+          return;
+        }
+        setOrderType("dine_in");
+      }
     },
     {
       key: "3",
       ctrl: true,
-      action: () => setOrderType("delivery")
+      action: () => {
+        if (!canChangeOrderType) {
+          return;
+        }
+        setOrderType("delivery");
+      }
     },
     {
       key: "p",
@@ -386,37 +496,62 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
             </Box>
           ) : (
             <>
-              <Button
-                size="sm"
-                variant={currentOrder.orderType === "takeaway" ? "solid" : "outline"}
-                onClick={() => setOrderType("takeaway")}
-              >
-                Takeaway
-              </Button>
-              <Button
-                size="sm"
-                variant={currentOrder.orderType === "dine_in" ? "solid" : "outline"}
-                onClick={() => setOrderType("dine_in")}
-              >
-                Dine In
-              </Button>
-              <Button
-                size="sm"
-                variant={currentOrder.orderType === "delivery" ? "solid" : "outline"}
-                onClick={() => setOrderType("delivery")}
-              >
-                Delivery
-              </Button>
+                <Button
+                  size="sm"
+                  variant={currentOrder.orderType === "takeaway" ? "solid" : "outline"}
+                  onClick={() => {
+                    if (!canChangeOrderType) {
+                      return;
+                    }
+                    setOrderType("takeaway");
+                  }}
+                >
+                  Takeaway
+                </Button>
+                <Button
+                  size="sm"
+                  variant={currentOrder.orderType === "dine_in" ? "solid" : "outline"}
+                  onClick={() => {
+                    if (!canChangeOrderType) {
+                      return;
+                    }
+                    setOrderType("dine_in");
+                  }}
+                >
+                  Dine In
+                </Button>
+                <Button
+                  size="sm"
+                  variant={currentOrder.orderType === "delivery" ? "solid" : "outline"}
+                  onClick={() => {
+                    if (!canChangeOrderType) {
+                      return;
+                    }
+                    setOrderType("delivery");
+                  }}
+                >
+                  Delivery
+                </Button>
             </>
           )}
         </HStack>
         <VStack align="end" spacing={0}>
+          <Button size="xs" variant="outline" mb={1} isLoading={isRefreshingStock} onClick={() => void handleRefreshStock()}>
+            Refresh Stock
+          </Button>
           <Text color="#6D584E" fontSize="sm">
             Invoice: {currentOrder.invoiceNumber}
           </Text>
           {!hasAllocatedStock ? (
             <Text fontSize="xs" color="#B91C1C" fontWeight={700}>
-              Allocated stock unavailable
+              No stock allocated by admin for today
+            </Text>
+          ) : null}
+          {isPunchedIn !== true ? (
+            <Text fontSize="xs" color="#B91C1C" fontWeight={700}>
+              {isPunchedIn === false
+                ? "Punch in required to take orders"
+                : "Attendance status not verified. Refresh Attendance"}
             </Text>
           ) : null}
           {closingStatus && !closingStatus.canTakeOrders ? (
@@ -429,7 +564,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
 
       {shouldShowLanding ? (
         <RecentBillsTableCard
-          bills={pendingBills}
+          bills={filteredPendingBills}
           onNewOrder={startNewOrder}
           onResume={async (localOrderId) => {
             await resumePending(localOrderId);
@@ -526,8 +661,10 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
               onOpenCustomerModal={() => openCustomerStartModal("change")}
               onClear={() => {
                 const selectedOrderType = currentOrder.orderType;
+                const selectedOrderChannel = currentOrder.orderChannel;
                 clearOrder();
                 setOrderType(selectedOrderType);
+                setOrderChannel(selectedOrderChannel);
                 setIsOrderFlowActive(false);
               }}
             />
@@ -553,7 +690,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
       <PendingBillsDrawer
         isOpen={pendingDrawer.isOpen}
         onClose={pendingDrawer.onClose}
-        pendingBills={pendingBills}
+        pendingBills={filteredPendingBills}
         onResume={async (localOrderId) => {
           await resumePending(localOrderId);
           setIsOrderFlowActive(true);

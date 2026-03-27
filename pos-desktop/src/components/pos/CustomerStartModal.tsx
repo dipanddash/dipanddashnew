@@ -15,7 +15,7 @@ import {
   Text,
   VStack
 } from "@chakra-ui/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { CustomerRecord } from "@/types/pos";
 
@@ -29,7 +29,7 @@ type CustomerStartModalProps = {
   onSelectCustomer: (customer: CustomerRecord) => void;
 };
 
-const normalizePhone = (value: string) => value.replace(/[^\d+]/g, "");
+const normalizePhone = (value: string) => value.replace(/\D/g, "");
 
 export const CustomerStartModal = ({
   isOpen,
@@ -45,6 +45,9 @@ export const CustomerStartModal = ({
   const [searchResults, setSearchResults] = useState<CustomerRecord[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const searchCacheRef = useRef<Map<string, CustomerRecord[]>>(new Map());
+  const phoneCacheRef = useRef<Map<string, CustomerRecord | null>>(new Map());
+  const activeLookupRef = useRef(0);
 
   const normalizedPhone = useMemo(() => normalizePhone(phone), [phone]);
   const exactMatch = useMemo(
@@ -61,6 +64,7 @@ export const CustomerStartModal = ({
     setSearchResults([]);
     setIsSearching(false);
     setIsSubmitting(false);
+    activeLookupRef.current += 1;
   }, [isOpen]);
 
   useEffect(() => {
@@ -69,27 +73,59 @@ export const CustomerStartModal = ({
     }
 
     const query = normalizedPhone.trim();
-    if (query.length < 3) {
+    if (query.length < 4) {
       setSearchResults([]);
+      setIsSearching(false);
       return;
     }
 
     const timer = window.setTimeout(() => {
       void (async () => {
+        const lookupId = activeLookupRef.current + 1;
+        activeLookupRef.current = lookupId;
         setIsSearching(true);
         try {
+          if (query.length >= 10) {
+            const cachedExact = phoneCacheRef.current.get(query);
+            if (cachedExact !== undefined) {
+              if (activeLookupRef.current === lookupId) {
+                setSearchResults(cachedExact ? [cachedExact] : []);
+              }
+              return;
+            }
+            const matched = await onFindByPhone(query);
+            phoneCacheRef.current.set(query, matched);
+            if (activeLookupRef.current === lookupId) {
+              setSearchResults(matched ? [matched] : []);
+            }
+            return;
+          }
+
+          const cachedResults = searchCacheRef.current.get(query);
+          if (cachedResults !== undefined) {
+            if (activeLookupRef.current === lookupId) {
+              setSearchResults(cachedResults);
+            }
+            return;
+          }
+
           const results = await onSearchCustomers(query);
-          setSearchResults(results);
+          searchCacheRef.current.set(query, results);
+          if (activeLookupRef.current === lookupId) {
+            setSearchResults(results);
+          }
         } finally {
-          setIsSearching(false);
+          if (activeLookupRef.current === lookupId) {
+            setIsSearching(false);
+          }
         }
       })();
-    }, 220);
+    }, 420);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isOpen, normalizedPhone, onSearchCustomers]);
+  }, [isOpen, normalizedPhone, onFindByPhone, onSearchCustomers]);
 
   const canCreate = normalizedPhone.length >= 8 && customerName.trim().length >= 2;
 
@@ -100,7 +136,11 @@ export const CustomerStartModal = ({
 
     setIsSubmitting(true);
     try {
-      const matched = exactMatch ?? (await onFindByPhone(normalizedPhone));
+      let matched = exactMatch ?? phoneCacheRef.current.get(normalizedPhone) ?? null;
+      if (!matched) {
+        matched = await onFindByPhone(normalizedPhone);
+        phoneCacheRef.current.set(normalizedPhone, matched);
+      }
       if (matched) {
         onSelectCustomer(matched);
         return;
@@ -135,8 +175,11 @@ export const CustomerStartModal = ({
               <Input
                 id="customer-phone-input"
                 value={phone}
-                onChange={(event) => setPhone(event.target.value)}
+                onChange={(event) => setPhone(normalizePhone(event.target.value).slice(0, 15))}
                 placeholder="Enter phone number"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={15}
                 autoFocus
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -147,36 +190,44 @@ export const CustomerStartModal = ({
               />
             </FormControl>
 
-            {isSearching ? (
-              <Text fontSize="sm" color="#6F5A50">
-                Searching customer...
-              </Text>
-            ) : null}
+            <Box minH="56px">
+              {isSearching ? (
+                <Text fontSize="sm" color="#6F5A50">
+                  Checking customer...
+                </Text>
+              ) : null}
 
-            {searchResults.length ? (
-              <VStack align="stretch" spacing={2} maxH="220px" overflowY="auto" pr={1}>
-                {searchResults.map((customer) => (
-                  <HStack
-                    key={customer.localId}
-                    justify="space-between"
-                    p={2.5}
-                    borderRadius="10px"
-                    border="1px solid"
-                    borderColor="rgba(132, 79, 52, 0.18)"
-                  >
-                    <VStack align="start" spacing={0}>
-                      <Text fontWeight={700}>{customer.name}</Text>
-                      <Text fontSize="sm" color="#6F5A50">
-                        {customer.phone}
-                      </Text>
-                    </VStack>
-                    <Button size="sm" onClick={() => onSelectCustomer(customer)}>
-                      Use
-                    </Button>
-                  </HStack>
-                ))}
-              </VStack>
-            ) : null}
+              {!isSearching && normalizedPhone.length >= 10 && !searchResults.length ? (
+                <Text fontSize="sm" color="#6F5A50">
+                  No existing customer found for this number.
+                </Text>
+              ) : null}
+
+              {searchResults.length ? (
+                <VStack align="stretch" spacing={2} maxH="220px" overflowY="auto" pr={1}>
+                  {searchResults.map((customer) => (
+                    <HStack
+                      key={customer.localId}
+                      justify="space-between"
+                      p={2.5}
+                      borderRadius="10px"
+                      border="1px solid"
+                      borderColor="rgba(132, 79, 52, 0.18)"
+                    >
+                      <VStack align="start" spacing={0}>
+                        <Text fontWeight={700}>{customer.name}</Text>
+                        <Text fontSize="sm" color="#6F5A50">
+                          {customer.phone}
+                        </Text>
+                      </VStack>
+                      <Button size="sm" onClick={() => onSelectCustomer(customer)}>
+                        Use
+                      </Button>
+                    </HStack>
+                  ))}
+                </VStack>
+              ) : null}
+            </Box>
 
             {!exactMatch ? (
               <Box borderTop="1px dashed" borderColor="rgba(132, 79, 52, 0.2)" pt={3}>

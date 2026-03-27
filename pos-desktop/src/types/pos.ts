@@ -1,5 +1,6 @@
 export type PaymentMode = "cash" | "card" | "upi" | "mixed";
 export type OrderType = "takeaway" | "dine_in" | "delivery" | "snooker";
+export type OrderChannel = "dine-in" | "take-away" | "swiggy" | "zomato" | "snooker";
 export type PosLineType = "item" | "add_on" | "combo" | "product";
 export type PosOrderStatus = "draft" | "pending" | "paid" | "cancelled";
 export type SyncStatus = "pending" | "syncing" | "synced" | "failed" | "needs_attention";
@@ -188,6 +189,7 @@ export type PosOrder = {
   serverInvoiceId: string | null;
   invoiceNumber: string;
   orderType: OrderType;
+  orderChannel: OrderChannel | null;
   tableLabel: string | null;
   kitchenStatus: KitchenStatus;
   status: PosOrderStatus;
@@ -418,6 +420,7 @@ export type PendingBillSummary = {
   customerName: string;
   customerPhone: string;
   orderType: OrderType;
+  orderChannel: OrderChannel | null;
   tableLabel: string | null;
   kitchenStatus: KitchenStatus;
   totalAmount: number;
@@ -431,6 +434,7 @@ export type RecentBillSummary = {
   customerName: string;
   customerPhone: string;
   orderType: OrderType;
+  orderChannel: OrderChannel | null;
   tableLabel: string | null;
   kitchenStatus: KitchenStatus;
   status: PosOrderStatus;

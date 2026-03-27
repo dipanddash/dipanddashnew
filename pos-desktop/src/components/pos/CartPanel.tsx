@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  Checkbox,
   Divider,
   HStack,
   Input,
@@ -54,6 +55,7 @@ export const CartPanel = ({
   const [couponCode, setCouponCode] = useState("");
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
   const [manualDiscountInput, setManualDiscountInput] = useState(String(order.manualDiscountAmount || ""));
+  const [isPercentageDiscount, setIsPercentageDiscount] = useState(false);
 
   const canCheckout = Boolean(selectedCustomer) && order.lines.length > 0 && order.totals.totalAmount > 0;
 
@@ -67,13 +69,42 @@ export const CartPanel = ({
   };
 
   useEffect(() => {
-    setManualDiscountInput(order.manualDiscountAmount ? String(order.manualDiscountAmount) : "");
-  }, [order.manualDiscountAmount]);
+    if (!isPercentageDiscount) {
+      setManualDiscountInput(order.manualDiscountAmount ? String(order.manualDiscountAmount) : "");
+      return;
+    }
+    if (!order.lines.length && order.manualDiscountAmount <= 0) {
+      setManualDiscountInput("");
+    }
+  }, [isPercentageDiscount, order.lines.length, order.manualDiscountAmount]);
 
   const handleApplyCoupon = () => {
     const result = onApplyCoupon(couponCode);
     setCouponMessage(result.message);
   };
+
+  const applyManualDiscount = (rawValue: string, usePercentage: boolean = isPercentageDiscount) => {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+      onManualDiscountChange(0);
+      return;
+    }
+
+    if (usePercentage) {
+      const percentage = Math.min(100, Math.max(0, parsed));
+      const percentageAmount = roundMoney((order.totals.subtotal * percentage) / 100);
+      onManualDiscountChange(percentageAmount);
+      return;
+    }
+
+    onManualDiscountChange(Math.max(0, roundMoney(parsed)));
+  };
+
+  const parsedManualDiscountInput = Number(manualDiscountInput);
+  const manualDiscountPreviewAmount =
+    isPercentageDiscount && Number.isFinite(parsedManualDiscountInput)
+      ? roundMoney((order.totals.subtotal * Math.min(100, Math.max(0, parsedManualDiscountInput))) / 100)
+      : order.totals.manualDiscountAmount;
 
   return (
     <VStack
@@ -132,6 +163,7 @@ export const CartPanel = ({
                   size="xs"
                   variant="ghost"
                   colorScheme="red"
+                  tooltipProps={{ isDisabled: true }}
                   isDisabled={line.isComplimentary}
                   onClick={() => onLineRemove(line.lineId)}
                 />
@@ -224,6 +256,7 @@ export const CartPanel = ({
                           size="xs"
                           variant="ghost"
                           colorScheme="red"
+                          tooltipProps={{ isDisabled: true }}
                           onClick={() => onRemoveAddOnFromLine(line.lineId, entry.addOnId)}
                         />
                       </HStack>
@@ -268,30 +301,56 @@ export const CartPanel = ({
         </Text>
       ) : null}
 
-      <HStack>
+      <HStack align="start">
         <Text fontSize="sm" minW="120px">
           Manual Discount
         </Text>
-        <Input
-          value={manualDiscountInput}
-          type="text"
-          inputMode="decimal"
-          onChange={(event) => {
-            setManualDiscountInput(event.target.value);
-          }}
-          onBlur={() => {
-            const parsed = Number(manualDiscountInput);
-            onManualDiscountChange(Number.isFinite(parsed) ? Math.max(0, roundMoney(parsed)) : 0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              const parsed = Number(manualDiscountInput);
-              onManualDiscountChange(Number.isFinite(parsed) ? Math.max(0, roundMoney(parsed)) : 0);
-            }
-          }}
-        />
+        <VStack align="stretch" spacing={1} flex={1}>
+          <HStack justify="space-between" align="center" minH="30px">
+            <Checkbox
+              size="sm"
+              colorScheme="brand"
+              isChecked={isPercentageDiscount}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setIsPercentageDiscount(checked);
+                applyManualDiscount(manualDiscountInput, checked);
+              }}
+            >
+              Apply as percentage (%)
+            </Checkbox>
+            <Text fontSize="xs" color="#7A6258" fontWeight={600}>
+              {isPercentageDiscount ? "Mode: %" : "Mode: Rs"}
+            </Text>
+          </HStack>
+          <Input
+            value={manualDiscountInput}
+            type="text"
+            inputMode="decimal"
+            placeholder={isPercentageDiscount ? "Enter %" : "Enter amount"}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setManualDiscountInput(nextValue);
+              applyManualDiscount(nextValue);
+            }}
+            onBlur={() => {
+              applyManualDiscount(manualDiscountInput);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                applyManualDiscount(manualDiscountInput);
+              }
+            }}
+          />
+          <Text fontSize="xs" color="#7A6258">
+            {isPercentageDiscount
+              ? `Discount ${Math.min(100, Math.max(0, Number.isFinite(parsedManualDiscountInput) ? parsedManualDiscountInput : 0))}% = ${formatINR(
+                  manualDiscountPreviewAmount
+                )} (on subtotal)`
+              : `Discount amount: ${formatINR(order.totals.manualDiscountAmount)}`}
+          </Text>
+        </VStack>
       </HStack>
-
       <VStack align="stretch" spacing={1}>
         <HStack justify="space-between">
           <Text color="#7A6258">Subtotal</Text>

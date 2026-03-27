@@ -58,6 +58,7 @@ type ProcurementStatsFilters = {
 
 type CreateSupplierPayload = {
   name: string;
+  storeName?: string;
   phone: string;
   address?: string;
   isActive?: boolean;
@@ -207,6 +208,7 @@ export class ProcurementService {
     return {
       id: supplier.id,
       name: supplier.name,
+      storeName: supplier.storeName,
       phone: supplier.phone,
       address: supplier.address,
       isActive: supplier.isActive,
@@ -293,7 +295,7 @@ export class ProcurementService {
 
     if (filters.search) {
       query.andWhere(
-        "(LOWER(supplier.name) LIKE LOWER(:search) OR LOWER(supplier.phone) LIKE LOWER(:search) OR LOWER(COALESCE(supplier.address, '')) LIKE LOWER(:search))",
+        "(LOWER(supplier.name) LIKE LOWER(:search) OR LOWER(COALESCE(supplier.storeName, '')) LIKE LOWER(:search) OR LOWER(supplier.phone) LIKE LOWER(:search) OR LOWER(COALESCE(supplier.address, '')) LIKE LOWER(:search))",
         { search: `%${filters.search}%` }
       );
     }
@@ -365,6 +367,7 @@ export class ProcurementService {
 
     const supplier = this.supplierRepository.create({
       name,
+      storeName: payload.storeName ? normalizeText(payload.storeName) : null,
       phone: normalizeText(payload.phone),
       address: payload.address ? normalizeText(payload.address) : null,
       isActive: payload.isActive ?? true
@@ -385,6 +388,10 @@ export class ProcurementService {
 
     if (payload.phone !== undefined) {
       supplier.phone = normalizeText(payload.phone);
+    }
+
+    if (payload.storeName !== undefined) {
+      supplier.storeName = payload.storeName ? normalizeText(payload.storeName) : null;
     }
 
     if (payload.address !== undefined) {
@@ -650,6 +657,179 @@ export class ProcurementService {
     return manager.save(IngredientStock, created);
   }
 
+  private async applyPurchaseLines(
+    manager: EntityManager,
+    lines: PurchaseOrderLinePayload[],
+    purchaseNumber: string,
+    supplierName: string
+  ) {
+    const lineEntities: PurchaseOrderLine[] = [];
+    let totalAmount = 0;
+
+    for (const line of lines) {
+      const quantity = toFixedQuantity(line.quantity);
+      const unitPrice = toFixedPrice(line.unitPrice);
+      const lineTotal = toFixedPrice(quantity * unitPrice);
+
+      if (line.lineType === "ingredient") {
+        const ingredientId = line.ingredientId;
+        if (!ingredientId) {
+          throw new AppError(422, "Ingredient is required for ingredient purchase line");
+        }
+
+        const ingredient = await manager.findOne(Ingredient, {
+          where: { id: ingredientId, isActive: true },
+          relations: { category: true }
+        });
+        if (!ingredient) {
+          throw new AppError(404, "Ingredient not found or inactive");
+        }
+
+        const stock = await this.getOrCreateIngredientStock(manager, ingredient.id);
+        const stockBefore = toFixedQuantity(toNumber(stock.totalStock));
+        const stockAfter = toFixedQuantity(stockBefore + quantity);
+        stock.totalStock = stockAfter;
+        stock.lastUpdatedAt = new Date();
+        await manager.save(IngredientStock, stock);
+
+        if (line.updateUnitPrice) {
+          ingredient.perUnitPrice = unitPrice;
+          await manager.save(Ingredient, ingredient);
+        }
+
+        const stockLog = manager.create(IngredientStockLog, {
+          ingredientId: ingredient.id,
+          type: IngredientStockLogType.ADD,
+          quantity,
+          note: line.note?.trim() || `Purchased via ${purchaseNumber} from ${supplierName}.`
+        });
+        await manager.save(IngredientStockLog, stockLog);
+
+        const lineEntity = manager.create(PurchaseOrderLine, {
+          lineType: "ingredient",
+          ingredientId: ingredient.id,
+          productId: null,
+          itemNameSnapshot: ingredient.name,
+          categoryNameSnapshot: ingredient.category?.name ?? null,
+          unit: ingredient.unit,
+          stockBefore,
+          stockAdded: quantity,
+          stockAfter,
+          unitPrice,
+          lineTotal,
+          unitPriceUpdated: Boolean(line.updateUnitPrice)
+        });
+        lineEntities.push(lineEntity);
+        totalAmount += lineTotal;
+        continue;
+      }
+
+      const productId = line.productId;
+      if (!productId) {
+        throw new AppError(422, "Product is required for product purchase line");
+      }
+
+      const product = await manager.findOne(Product, {
+        where: { id: productId, isActive: true }
+      });
+      if (!product) {
+        throw new AppError(404, "Product not found or inactive");
+      }
+
+      const stockBefore = toFixedQuantity(toNumber(product.currentStock));
+      const stockAfter = toFixedQuantity(stockBefore + quantity);
+      product.currentStock = stockAfter;
+
+      if (line.updateUnitPrice) {
+        product.purchaseUnitPrice = unitPrice;
+      }
+      await manager.save(Product, product);
+
+      const lineEntity = manager.create(PurchaseOrderLine, {
+        lineType: "product",
+        ingredientId: null,
+        productId: product.id,
+        itemNameSnapshot: product.name,
+        categoryNameSnapshot: product.category,
+        unit: product.unit,
+        stockBefore,
+        stockAdded: quantity,
+        stockAfter,
+        unitPrice,
+        lineTotal,
+        unitPriceUpdated: Boolean(line.updateUnitPrice)
+      });
+      lineEntities.push(lineEntity);
+      totalAmount += lineTotal;
+    }
+
+    return {
+      lineEntities,
+      totalAmount: toFixedPrice(totalAmount)
+    };
+  }
+
+  private async rollbackPurchaseOrderLines(manager: EntityManager, lines: PurchaseOrderLine[], purchaseNumber: string) {
+    for (const line of lines) {
+      const rollbackQuantity = toFixedQuantity(toNumber(line.stockAdded));
+
+      if (line.lineType === "ingredient" && line.ingredientId) {
+        const ingredient = await manager.findOne(Ingredient, {
+          where: { id: line.ingredientId }
+        });
+        if (!ingredient) {
+          throw new AppError(404, `Ingredient not found for rollback: ${line.itemNameSnapshot}`);
+        }
+
+        const stock = await this.getOrCreateIngredientStock(manager, ingredient.id);
+        const stockBefore = toFixedQuantity(toNumber(stock.totalStock));
+        const stockAfter = toFixedQuantity(stockBefore - rollbackQuantity);
+
+        if (stockAfter < 0) {
+          throw new AppError(
+            409,
+            `Cannot edit purchase order ${purchaseNumber} because stock for ${line.itemNameSnapshot} is already consumed.`
+          );
+        }
+
+        stock.totalStock = stockAfter;
+        stock.lastUpdatedAt = new Date();
+        await manager.save(IngredientStock, stock);
+
+        const rollbackLog = manager.create(IngredientStockLog, {
+          ingredientId: ingredient.id,
+          type: IngredientStockLogType.ADJUST,
+          quantity: toFixedQuantity(-rollbackQuantity),
+          note: `Rollback from purchase edit ${purchaseNumber}`
+        });
+        await manager.save(IngredientStockLog, rollbackLog);
+
+        continue;
+      }
+
+      if (line.lineType === "product" && line.productId) {
+        const product = await manager.findOne(Product, {
+          where: { id: line.productId }
+        });
+        if (!product) {
+          throw new AppError(404, `Product not found for rollback: ${line.itemNameSnapshot}`);
+        }
+
+        const stockBefore = toFixedQuantity(toNumber(product.currentStock));
+        const stockAfter = toFixedQuantity(stockBefore - rollbackQuantity);
+        if (stockAfter < 0) {
+          throw new AppError(
+            409,
+            `Cannot edit purchase order ${purchaseNumber} because stock for ${line.itemNameSnapshot} is already consumed.`
+          );
+        }
+
+        product.currentStock = stockAfter;
+        await manager.save(Product, product);
+      }
+    }
+  }
+
   async createPurchaseOrder(payload: CreatePurchaseOrderPayload, createdByUserId: string | null) {
     const purchaseDate = payload.purchaseDate || getTodayDate();
     const purchaseType = this.resolvePurchaseType(payload.lines);
@@ -667,117 +847,83 @@ export class ProcurementService {
       }
 
       const purchaseNumber = await this.generatePurchaseNumber(queryRunner.manager, purchaseDate);
-      const lineEntities: PurchaseOrderLine[] = [];
-      let totalAmount = 0;
-
-      for (const line of payload.lines) {
-        const quantity = toFixedQuantity(line.quantity);
-        const unitPrice = toFixedPrice(line.unitPrice);
-        const lineTotal = toFixedPrice(quantity * unitPrice);
-
-        if (line.lineType === "ingredient") {
-          const ingredientId = line.ingredientId;
-          if (!ingredientId) {
-            throw new AppError(422, "Ingredient is required for ingredient purchase line");
-          }
-
-          const ingredient = await queryRunner.manager.findOne(Ingredient, {
-            where: { id: ingredientId, isActive: true },
-            relations: { category: true }
-          });
-          if (!ingredient) {
-            throw new AppError(404, "Ingredient not found or inactive");
-          }
-
-          const stock = await this.getOrCreateIngredientStock(queryRunner.manager, ingredient.id);
-          const stockBefore = toFixedQuantity(toNumber(stock.totalStock));
-          const stockAfter = toFixedQuantity(stockBefore + quantity);
-          stock.totalStock = stockAfter;
-          stock.lastUpdatedAt = new Date();
-          await queryRunner.manager.save(IngredientStock, stock);
-
-          if (line.updateUnitPrice) {
-            ingredient.perUnitPrice = unitPrice;
-            await queryRunner.manager.save(Ingredient, ingredient);
-          }
-
-          const stockLog = queryRunner.manager.create(IngredientStockLog, {
-            ingredientId: ingredient.id,
-            type: IngredientStockLogType.ADD,
-            quantity,
-            note: line.note?.trim() || `Purchased via ${purchaseNumber} from ${supplier.name}.`
-          });
-          await queryRunner.manager.save(IngredientStockLog, stockLog);
-
-          const lineEntity = queryRunner.manager.create(PurchaseOrderLine, {
-            lineType: "ingredient",
-            ingredientId: ingredient.id,
-            productId: null,
-            itemNameSnapshot: ingredient.name,
-            categoryNameSnapshot: ingredient.category?.name ?? null,
-            unit: ingredient.unit,
-            stockBefore,
-            stockAdded: quantity,
-            stockAfter,
-            unitPrice,
-            lineTotal,
-            unitPriceUpdated: Boolean(line.updateUnitPrice)
-          });
-          lineEntities.push(lineEntity);
-          totalAmount += lineTotal;
-          continue;
-        }
-
-        const productId = line.productId;
-        if (!productId) {
-          throw new AppError(422, "Product is required for product purchase line");
-        }
-
-        const product = await queryRunner.manager.findOne(Product, {
-          where: { id: productId, isActive: true }
-        });
-        if (!product) {
-          throw new AppError(404, "Product not found or inactive");
-        }
-
-        const stockBefore = toFixedQuantity(toNumber(product.currentStock));
-        const stockAfter = toFixedQuantity(stockBefore + quantity);
-        product.currentStock = stockAfter;
-
-        if (line.updateUnitPrice) {
-          product.purchaseUnitPrice = unitPrice;
-        }
-        await queryRunner.manager.save(Product, product);
-
-        const lineEntity = queryRunner.manager.create(PurchaseOrderLine, {
-          lineType: "product",
-          ingredientId: null,
-          productId: product.id,
-          itemNameSnapshot: product.name,
-          categoryNameSnapshot: product.category,
-          unit: product.unit,
-          stockBefore,
-          stockAdded: quantity,
-          stockAfter,
-          unitPrice,
-          lineTotal,
-          unitPriceUpdated: Boolean(line.updateUnitPrice)
-        });
-        lineEntities.push(lineEntity);
-        totalAmount += lineTotal;
-      }
+      const { lineEntities, totalAmount } = await this.applyPurchaseLines(
+        queryRunner.manager,
+        payload.lines,
+        purchaseNumber,
+        supplier.name
+      );
 
       const order = queryRunner.manager.create(PurchaseOrder, {
         purchaseNumber,
         supplierId: payload.supplierId,
         purchaseDate,
         purchaseType,
-        totalAmount: toFixedPrice(totalAmount),
+        totalAmount,
         note: payload.note?.trim() || null,
         invoiceImageUrl: payload.invoiceImageUrl?.trim() || null,
         createdByUserId
       });
       const savedOrder = await queryRunner.manager.save(PurchaseOrder, order);
+
+      lineEntities.forEach((lineEntity) => {
+        lineEntity.purchaseOrderId = savedOrder.id;
+      });
+      await queryRunner.manager.save(PurchaseOrderLine, lineEntities);
+
+      await queryRunner.commitTransaction();
+      return this.getPurchaseOrderById(savedOrder.id);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async updatePurchaseOrder(id: string, payload: CreatePurchaseOrderPayload) {
+    const purchaseDate = payload.purchaseDate || getTodayDate();
+    const purchaseType = this.resolvePurchaseType(payload.lines);
+
+    const queryRunner = AppDataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const existingOrder = await queryRunner.manager.findOne(PurchaseOrder, {
+        where: { id },
+        relations: { lines: true }
+      });
+      if (!existingOrder) {
+        throw new AppError(404, "Purchase order not found");
+      }
+
+      const supplier = await queryRunner.manager.findOne(Supplier, {
+        where: { id: payload.supplierId, isActive: true }
+      });
+      if (!supplier) {
+        throw new AppError(404, "Supplier not found or inactive");
+      }
+
+      await this.rollbackPurchaseOrderLines(queryRunner.manager, existingOrder.lines, existingOrder.purchaseNumber);
+
+      await queryRunner.manager.delete(PurchaseOrderLine, { purchaseOrderId: existingOrder.id });
+
+      const { lineEntities, totalAmount } = await this.applyPurchaseLines(
+        queryRunner.manager,
+        payload.lines,
+        existingOrder.purchaseNumber,
+        supplier.name
+      );
+
+      existingOrder.supplierId = payload.supplierId;
+      existingOrder.purchaseDate = purchaseDate;
+      existingOrder.purchaseType = purchaseType;
+      existingOrder.totalAmount = totalAmount;
+      existingOrder.note = payload.note?.trim() || null;
+      existingOrder.invoiceImageUrl = payload.invoiceImageUrl?.trim() || null;
+
+      const savedOrder = await queryRunner.manager.save(PurchaseOrder, existingOrder);
 
       lineEntities.forEach((lineEntity) => {
         lineEntity.purchaseOrderId = savedOrder.id;
@@ -835,13 +981,26 @@ export class ProcurementService {
       ? await this.purchaseOrderLineRepository
           .createQueryBuilder("line")
           .select("line.purchaseOrderId", "purchaseOrderId")
+          .addSelect("line.lineType", "lineType")
           .addSelect("COUNT(*)", "count")
           .where("line.purchaseOrderId IN (:...orderIds)", { orderIds })
           .groupBy("line.purchaseOrderId")
-          .getRawMany<{ purchaseOrderId: string; count: string }>()
+          .addGroupBy("line.lineType")
+          .getRawMany<{ purchaseOrderId: string; lineType: string; count: string }>()
       : [];
 
-    const lineCountMap = new Map(lineCountRows.map((row) => [row.purchaseOrderId, Number(row.count)]));
+    const lineCountMap = new Map<string, { total: number; ingredient: number; product: number }>();
+    for (const row of lineCountRows) {
+      const current = lineCountMap.get(row.purchaseOrderId) ?? { total: 0, ingredient: 0, product: 0 };
+      const count = Number(row.count);
+      current.total += count;
+      if (row.lineType === "ingredient") {
+        current.ingredient += count;
+      } else if (row.lineType === "product") {
+        current.product += count;
+      }
+      lineCountMap.set(row.purchaseOrderId, current);
+    }
 
     const totalsQuery = this.purchaseOrderRepository
       .createQueryBuilder("purchaseOrder")
@@ -876,22 +1035,27 @@ export class ProcurementService {
       .getRawOne<{ count: string; totalAmount: string }>();
 
     return {
-      orders: orders.map((order) => ({
-        id: order.id,
-        purchaseNumber: order.purchaseNumber,
-        purchaseDate: order.purchaseDate,
-        purchaseType: order.purchaseType,
-        supplierId: order.supplierId,
-        supplierName: order.supplier?.name ?? "-",
-        lineCount: lineCountMap.get(order.id) ?? 0,
-        totalAmount: toFixedPrice(toNumber(order.totalAmount)),
-        note: order.note,
-        invoiceImageUrl: order.invoiceImageUrl,
-        createdByUserId: order.createdByUserId,
-        createdByUserName: order.createdByUser?.fullName ?? null,
-        createdAt: order.createdAt,
-        updatedAt: order.updatedAt
-      })),
+      orders: orders.map((order) => {
+        const lineCounts = lineCountMap.get(order.id) ?? { total: 0, ingredient: 0, product: 0 };
+        return {
+          id: order.id,
+          purchaseNumber: order.purchaseNumber,
+          purchaseDate: order.purchaseDate,
+          purchaseType: order.purchaseType,
+          supplierId: order.supplierId,
+          supplierName: order.supplier?.name ?? "-",
+          lineCount: lineCounts.total,
+          ingredientLineCount: lineCounts.ingredient,
+          productLineCount: lineCounts.product,
+          totalAmount: toFixedPrice(toNumber(order.totalAmount)),
+          note: order.note,
+          invoiceImageUrl: order.invoiceImageUrl,
+          createdByUserId: order.createdByUserId,
+          createdByUserName: order.createdByUser?.fullName ?? null,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt
+        };
+      }),
       pagination: getPaginationMeta(page, limit, total),
       stats: {
         totalOrders: Number(totalsRow?.count ?? 0),
@@ -1031,6 +1195,7 @@ export class ProcurementService {
       suppliers: suppliers.map((supplier) => ({
         id: supplier.id,
         name: supplier.name,
+        storeName: supplier.storeName,
         phone: supplier.phone,
         address: supplier.address
       })),

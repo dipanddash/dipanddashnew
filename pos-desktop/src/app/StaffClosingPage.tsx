@@ -23,7 +23,7 @@ import { formatQuantityWithUnit } from "@/utils/quantity";
 
 export const StaffClosingPage = () => {
   const toast = useToast();
-  const { closingStatus, refreshClosingStatus } = usePos();
+  const { closingStatus, refreshClosingStatus, isPunchedIn, refreshShiftStatus } = usePos();
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [note, setNote] = useState("");
@@ -40,6 +40,7 @@ export const StaffClosingPage = () => {
   const canSubmit =
     Boolean(closingStatus?.pendingCloseDate) &&
     (closingStatus?.todayClosingCount ?? 0) < (closingStatus?.maxClosingsPerDay ?? 2);
+  const canSubmitWithShift = canSubmit && isPunchedIn === false;
 
   useEffect(() => {
     if (!closingStatus?.draft.rows.length) {
@@ -78,6 +79,10 @@ export const StaffClosingPage = () => {
   useEffect(() => {
     void loadHistory();
   }, [loadHistory]);
+
+  useEffect(() => {
+    void refreshShiftStatus();
+  }, [refreshShiftStatus]);
 
   const filteredDraftRows = useMemo(() => {
     const rows = closingStatus?.draft.rows ?? [];
@@ -171,6 +176,18 @@ export const StaffClosingPage = () => {
   );
 
   const handleSubmit = async () => {
+    if (isPunchedIn !== false) {
+      toast({
+        status: "warning",
+        title: isPunchedIn === true ? "Punch out required" : "Attendance status unavailable",
+        description:
+          isPunchedIn === true
+            ? "You must punch out from Attendance before submitting stock closing report."
+            : "Unable to verify shift state. Please open Attendance and refresh before closing stock."
+      });
+      return;
+    }
+
     if (!closingStatus?.pendingCloseDate || !closingStatus?.draft.rows.length) {
       toast({
         status: "warning",
@@ -321,6 +338,16 @@ export const StaffClosingPage = () => {
           </Box>
         ) : null}
 
+        {isPunchedIn !== false ? (
+          <Box mb={3} px={3} py={2.5} borderRadius="10px" bg="orange.50" border="1px solid" borderColor="orange.200">
+            <Text color="orange.700" fontWeight={700} fontSize="sm">
+              {isPunchedIn === true
+                ? "Stock closing can be submitted only after punch out."
+                : "Attendance status not verified. Refresh Attendance before submitting closing."}
+            </Text>
+          </Box>
+        ) : null}
+
         <PosDataTable
           rows={pagedDraftRows}
           columns={draftColumns}
@@ -377,15 +404,19 @@ export const StaffClosingPage = () => {
               color="white"
               bgGradient="linear(95deg, #8E0909 0%, #BE3329 46%, #D3A23D 100%)"
               _hover={{ bgGradient: "linear(95deg, #7A0707 0%, #A12822 46%, #BA8A34 100%)" }}
-              isDisabled={!canSubmit}
+              isDisabled={!canSubmitWithShift}
               isLoading={isSubmitting}
               onClick={() => void handleSubmit()}
             >
               Submit Closing ({pendingCloseDate ?? "No pending date"})
             </Button>
-            {!canSubmit ? (
+            {!canSubmitWithShift ? (
               <Text fontSize="xs" color="#7A6258">
-                Closing unavailable: either no pending close date or today limit reached.
+                {isPunchedIn === true
+                  ? "Closing unavailable: please punch out first."
+                  : isPunchedIn === null
+                    ? "Closing unavailable: attendance status not verified."
+                    : "Closing unavailable: either no pending close date or today limit reached."}
               </Text>
             ) : null}
           </VStack>

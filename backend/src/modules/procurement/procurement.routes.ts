@@ -19,6 +19,7 @@ import {
   purchaseOrderByIdSchema,
   purchaseOrderListSchema,
   supplierListSchema,
+  updatePurchaseOrderSchema,
   updateProductSchema,
   updateSupplierSchema
 } from "./procurement.validation";
@@ -70,6 +71,11 @@ router.post(
   "/purchase-orders",
   validateRequest(createPurchaseOrderSchema),
   asyncHandler(procurementController.createPurchaseOrder)
+);
+router.patch(
+  "/purchase-orders/:id",
+  validateRequest(updatePurchaseOrderSchema),
+  asyncHandler(procurementController.updatePurchaseOrder)
 );
 
 export const procurementRoutes = router;

@@ -10,6 +10,7 @@ import {
 
 import { catalogService } from "@/services/catalog.service";
 import { closingService } from "@/services/closing.service";
+import { attendanceService } from "@/services/attendance.service";
 import { customersService } from "@/services/customers.service";
 import { posBillingService } from "@/services/invoice-builder.service";
 import { ordersRepository } from "@/db/repositories/orders.repository";
@@ -29,6 +30,7 @@ import type {
   ClosingStatus,
   InvoicePaymentInput,
   KitchenStatus,
+  OrderChannel,
   OrderType,
   PendingBillSummary,
   PosOrder,
@@ -46,7 +48,9 @@ type PosContextValue = {
   isBootstrapping: boolean;
   allocationWarning: string | null;
   closingStatus: ClosingStatus | null;
+  isPunchedIn: boolean | null;
   setOrderType: (orderType: OrderType) => void;
+  setOrderChannel: (orderChannel: OrderChannel | null) => void;
   setTableLabel: (tableLabel: string) => void;
   attachCustomer: (customer: CustomerRecord | null) => void;
   addItem: (item: CatalogItem) => void;
@@ -78,18 +82,21 @@ type PosContextValue = {
   refreshCompletedBills: () => Promise<void>;
   refreshKitchenOrders: () => Promise<void>;
   refreshClosingStatus: () => Promise<void>;
+  refreshCatalogSnapshot: () => Promise<void>;
+  refreshShiftStatus: () => Promise<void>;
   clearAllocationWarning: () => void;
 };
 
 const PosContext = createContext<PosContextValue | undefined>(undefined);
 
-const createDraftOrder = (orderType: OrderType = "takeaway"): PosOrder => {
+const createDraftOrder = (orderType: OrderType = "takeaway", orderChannel: OrderChannel | null = null): PosOrder => {
   const now = new Date().toISOString();
   return {
     localOrderId: makeId(),
     serverInvoiceId: null,
     invoiceNumber: makeInvoiceNumber(),
     orderType,
+    orderChannel,
     tableLabel: null,
     kitchenStatus: "not_sent",
     status: "draft",
@@ -180,6 +187,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [allocationWarning, setAllocationWarning] = useState<string | null>(null);
   const [closingStatus, setClosingStatus] = useState<ClosingStatus | null>(null);
+  const [isPunchedIn, setIsPunchedIn] = useState<boolean | null>(null);
 
   const refreshPendingBills = useCallback(async () => {
     const pending = await ordersRepository.listPendingBills();
@@ -220,6 +228,27 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
     }
   }, []);
 
+  const refreshCatalogSnapshot = useCallback(async () => {
+    const snapshot = await catalogService.ensureSnapshot();
+    setCatalog(snapshot ?? null);
+    await refreshClosingStatus();
+  }, [refreshClosingStatus]);
+
+  const refreshShiftStatus = useCallback(async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const response = await attendanceService.getMyRecords({
+        date: today,
+        page: 1,
+        limit: 25
+      });
+      const hasOpenShift = response.data.records.some((record) => record.status === "punched_in");
+      setIsPunchedIn(hasOpenShift);
+    } catch {
+      setIsPunchedIn(null);
+    }
+  }, []);
+
   useEffect(() => {
     const bootstrap = async () => {
       setIsBootstrapping(true);
@@ -231,13 +260,14 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         await refreshCompletedBills();
         await refreshKitchenOrders();
         await refreshClosingStatus();
+        await refreshShiftStatus();
       } finally {
         setIsBootstrapping(false);
       }
     };
 
     void bootstrap();
-  }, [refreshClosingStatus, refreshCompletedBills, refreshKitchenOrders, refreshPendingBills, refreshRecentBills]);
+  }, [refreshClosingStatus, refreshCompletedBills, refreshKitchenOrders, refreshPendingBills, refreshRecentBills, refreshShiftStatus]);
 
   const validateAllocationForLines = useCallback(
     (lines: CartLine[], invoiceNumber: string) => {
@@ -264,6 +294,16 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         };
       }
 
+      if (isPunchedIn !== true) {
+        return {
+          ok: false as const,
+          message:
+            isPunchedIn === false
+              ? "You are punched out. Please punch in from Attendance to take orders."
+              : "Unable to verify attendance state. Please refresh Attendance and punch in before taking orders."
+        };
+      }
+
       const shouldEnforceDailyAllocation = catalog.controls?.enforceDailyAllocation ?? true;
       if (!shouldEnforceDailyAllocation) {
         return {
@@ -276,7 +316,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         return {
           ok: false as const,
           message:
-            "Allocated stock is not available. Please ask admin to allocate ingredient stock."
+            "No ingredient stock is allocated for today. Please contact admin to allocate stock before billing."
         };
       }
 
@@ -325,7 +365,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         const chunks: string[] = [];
         if (missingIngredients.size) {
           chunks.push(
-            `No allocated stock for: ${[...missingIngredients].join(", ")}`
+            `No admin allocation for: ${[...missingIngredients].join(", ")}`
           );
         }
         if (insufficientIngredients.length) {
@@ -333,7 +373,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         }
         return {
           ok: false as const,
-          message: `${chunks.join(". ")}. Please contact admin to allocate more stock.`
+          message: `${chunks.join(". ")}. Please contact admin to allocate or refill stock.`
         };
       }
 
@@ -341,7 +381,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         ok: true as const
       };
     },
-    [catalog, closingStatus]
+    [catalog, closingStatus, isPunchedIn]
   );
 
   const setOrderType = useCallback((orderType: OrderType) => {
@@ -350,6 +390,15 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         ...previous,
         orderType,
         tableLabel: orderType === "dine_in" ? previous.tableLabel : null
+      })
+    );
+  }, []);
+
+  const setOrderChannel = useCallback((orderChannel: OrderChannel | null) => {
+    setCurrentOrder((previous) =>
+      recomputeOrder({
+        ...previous,
+        orderChannel
       })
     );
   }, []);
@@ -369,25 +418,20 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
 
   const addItem = useCallback((item: CatalogItem) => {
     setCurrentOrder((previous) => {
-      const existing = previous.lines.find((line) => line.refId === item.id && line.lineType === "item");
-      const lines = existing
-        ? previous.lines.map((line) =>
-            line.lineId === existing.lineId ? { ...line, quantity: line.quantity + 1 } : line
-          )
-        : [
-            ...previous.lines,
-            {
-              lineId: makeId(),
-              lineType: "item",
-              refId: item.id,
-              name: item.name,
-              quantity: 1,
-              unitPrice: item.sellingPrice,
-              gstPercentage: item.gstPercentage,
-              addOns: [],
-              notes: null
-            } satisfies CartLine
-          ];
+      const lines = [
+        ...previous.lines,
+        {
+          lineId: makeId(),
+          lineType: "item",
+          refId: item.id,
+          name: item.name,
+          quantity: 1,
+          unitPrice: item.sellingPrice,
+          gstPercentage: item.gstPercentage,
+          addOns: [],
+          notes: null
+        } satisfies CartLine
+      ];
 
       const guard = validateAllocationForLines(lines, previous.invoiceNumber);
       if (!guard.ok) {
@@ -428,25 +472,20 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
 
   const addProduct = useCallback((product: CatalogProduct) => {
     setCurrentOrder((previous) => {
-      const existing = previous.lines.find((line) => line.refId === product.id && line.lineType === "product");
-      const lines = existing
-        ? previous.lines.map((line) =>
-            line.lineId === existing.lineId ? { ...line, quantity: line.quantity + 1 } : line
-          )
-        : [
-            ...previous.lines,
-            {
-              lineId: makeId(),
-              lineType: "product",
-              refId: product.id,
-              name: product.name,
-              quantity: 1,
-              unitPrice: product.sellingPrice,
-              gstPercentage: 0,
-              addOns: [],
-              notes: null
-            } satisfies CartLine
-          ];
+      const lines = [
+        ...previous.lines,
+        {
+          lineId: makeId(),
+          lineType: "product",
+          refId: product.id,
+          name: product.name,
+          quantity: 1,
+          unitPrice: product.sellingPrice,
+          gstPercentage: 0,
+          addOns: [],
+          notes: null
+        } satisfies CartLine
+      ];
 
       return recomputeOrder({ ...previous, lines });
     });
@@ -677,7 +716,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
   }, []);
 
   const clearOrder = useCallback(() => {
-    setCurrentOrder((previous) => createDraftOrder(previous.orderType));
+    setCurrentOrder((previous) => createDraftOrder(previous.orderType, previous.orderChannel));
   }, []);
 
   const saveAsPending = useCallback(async () => {
@@ -696,6 +735,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       customerName: pendingOrder.customer?.name ?? "Walk-in",
       customerPhone: pendingOrder.customer?.phone ?? "-",
       orderType: pendingOrder.orderType,
+      orderChannel: pendingOrder.orderChannel,
       tableLabel: pendingOrder.tableLabel,
       kitchenStatus: pendingOrder.kitchenStatus,
       totalAmount: pendingOrder.totals.totalAmount,
@@ -706,7 +746,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
     await refreshRecentBills();
     await refreshCompletedBills();
     await refreshKitchenOrders();
-    setCurrentOrder(createDraftOrder(currentOrder.orderType));
+    setCurrentOrder(createDraftOrder(currentOrder.orderType, currentOrder.orderChannel));
   }, [currentOrder, refreshCompletedBills, refreshKitchenOrders, refreshPendingBills, refreshRecentBills]);
 
   const sendToKitchen = useCallback(async () => {
@@ -741,6 +781,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       customerName: queuedOrder.customer?.name ?? "Walk-in",
       customerPhone: queuedOrder.customer?.phone ?? "-",
       orderType: queuedOrder.orderType,
+      orderChannel: queuedOrder.orderChannel,
       tableLabel: queuedOrder.tableLabel,
       kitchenStatus: queuedOrder.kitchenStatus,
       totalAmount: queuedOrder.totals.totalAmount,
@@ -778,7 +819,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
     await refreshRecentBills();
     await refreshCompletedBills();
     await refreshKitchenOrders();
-    setCurrentOrder(createDraftOrder(currentOrder.orderType));
+    setCurrentOrder(createDraftOrder(currentOrder.orderType, currentOrder.orderChannel));
     return { ok: true, message: "Order sent to kitchen." };
   }, [
     catalog,
@@ -933,7 +974,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       await refreshRecentBills();
       await refreshCompletedBills();
       await refreshKitchenOrders();
-      setCurrentOrder(createDraftOrder(currentOrder.orderType));
+      setCurrentOrder(createDraftOrder(currentOrder.orderType, currentOrder.orderChannel));
     },
     [
       catalog,
@@ -968,7 +1009,9 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       isBootstrapping,
       allocationWarning,
       closingStatus,
+      isPunchedIn,
       setOrderType,
+      setOrderChannel,
       setTableLabel,
       attachCustomer,
       addItem,
@@ -996,6 +1039,8 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       refreshCompletedBills,
       refreshKitchenOrders,
       refreshClosingStatus,
+      refreshCatalogSnapshot,
+      refreshShiftStatus,
       clearAllocationWarning
     }),
     [
@@ -1008,7 +1053,9 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       isBootstrapping,
       allocationWarning,
       closingStatus,
+      isPunchedIn,
       setOrderType,
+      setOrderChannel,
       setTableLabel,
       attachCustomer,
       addItem,
@@ -1036,6 +1083,8 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       refreshCompletedBills,
       refreshKitchenOrders,
       refreshClosingStatus,
+      refreshCatalogSnapshot,
+      refreshShiftStatus,
       clearAllocationWarning
     ]
   );

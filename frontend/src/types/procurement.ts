@@ -28,6 +28,7 @@ export type StockHealth = "LOW_STOCK" | "HEALTHY";
 export type SupplierListItem = {
   id: string;
   name: string;
+  storeName: string | null;
   phone: string;
   address: string | null;
   isActive: boolean;
@@ -96,6 +97,7 @@ export type ProductListResponse = {
 export type ProcurementMetaSupplier = {
   id: string;
   name: string;
+  storeName: string | null;
   phone: string;
   address: string | null;
 };
@@ -152,6 +154,8 @@ export type PurchaseOrderSummary = {
   supplierId: string;
   supplierName: string;
   lineCount: number;
+  ingredientLineCount: number;
+  productLineCount: number;
   totalAmount: number;
   note: string | null;
   invoiceImageUrl: string | null;

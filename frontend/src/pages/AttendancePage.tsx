@@ -239,7 +239,7 @@ export const AttendancePage = () => {
         title={isAdmin ? "Attendance Control Center" : "Attendance"}
         subtitle={
           isAdmin
-            ? "Track all staff punch sessions with date/name filters and performance metrics."
+            ? undefined
             : "Punch in/out for your shift and view your day-wise attendance summary."
         }
       />

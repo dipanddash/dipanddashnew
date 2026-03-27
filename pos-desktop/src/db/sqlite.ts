@@ -45,10 +45,12 @@ const parseSqlStatements = (sql: string) =>
     .filter((segment) => segment.length > 0);
 
 const ORDER_PAYMENT_MODES = new Set<PosOrder["paymentMode"]>(["cash", "card", "upi", "mixed", null]);
+const ORDER_CHANNELS = new Set<PosOrder["orderChannel"]>(["dine-in", "take-away", "swiggy", "zomato", "snooker", null]);
 
 const normalizeOrderRow = (row: PosOrder): PosOrder => ({
   ...row,
-  paymentMode: ORDER_PAYMENT_MODES.has(row.paymentMode ?? null) ? (row.paymentMode ?? null) : null
+  paymentMode: ORDER_PAYMENT_MODES.has(row.paymentMode ?? null) ? (row.paymentMode ?? null) : null,
+  orderChannel: ORDER_CHANNELS.has(row.orderChannel ?? null) ? (row.orderChannel ?? null) : null
 });
 
 const normalizePlayerCount = (playerCount: unknown, customers: unknown) => {
@@ -109,6 +111,11 @@ class PosStorage {
         // no-op: column already exists
       }
       try {
+        await this.db.execute("ALTER TABLE orders_local ADD COLUMN order_channel TEXT");
+      } catch {
+        // no-op: column already exists
+      }
+      try {
         await this.db.execute("ALTER TABLE orders_local ADD COLUMN kitchen_status TEXT NOT NULL DEFAULT 'not_sent'");
       } catch {
         // no-op: column already exists
@@ -120,6 +127,11 @@ class PosStorage {
       }
       try {
         await this.db.execute("ALTER TABLE pending_bills ADD COLUMN table_label TEXT");
+      } catch {
+        // no-op: column already exists
+      }
+      try {
+        await this.db.execute("ALTER TABLE pending_bills ADD COLUMN order_channel TEXT");
       } catch {
         // no-op: column already exists
       }
@@ -179,7 +191,12 @@ class PosStorage {
             gamingBookings: (parsed.gamingBookings ?? []).map((row) =>
               normalizeGamingBookingRow(row as GamingBooking)
             ),
-            pendingBills: parsed.pendingBills ?? [],
+            pendingBills: (parsed.pendingBills ?? []).map((bill) => ({
+              ...(bill as PendingBillSummary),
+              orderChannel: ORDER_CHANNELS.has((bill as PendingBillSummary).orderChannel ?? null)
+                ? ((bill as PendingBillSummary).orderChannel ?? null)
+                : null
+            })),
             queue: parsed.queue ?? [],
             settings: parsed.settings ?? {}
           };
@@ -422,13 +439,14 @@ class PosStorage {
         : null;
 
       await this.db.execute(
-        "INSERT OR REPLACE INTO orders_local (local_order_id, server_invoice_id, invoice_number, status, order_type, table_label, kitchen_status, customer_local_id, customer_snapshot_json, lines_json, offer_json, notes, totals_json, payment_json, sync_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO orders_local (local_order_id, server_invoice_id, invoice_number, status, order_type, order_channel, table_label, kitchen_status, customer_local_id, customer_snapshot_json, lines_json, offer_json, notes, totals_json, payment_json, sync_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           order.localOrderId,
           order.serverInvoiceId,
           order.invoiceNumber,
           order.status,
           order.orderType,
+          order.orderChannel,
           order.tableLabel,
           order.kitchenStatus,
           order.customer?.localId ?? null,
@@ -466,6 +484,7 @@ class PosStorage {
         invoice_number: string;
         status: PosOrder["status"];
         order_type: PosOrder["orderType"];
+        order_channel: PosOrder["orderChannel"];
         table_label: string | null;
         kitchen_status: PosOrder["kitchenStatus"];
         customer_snapshot_json: string | null;
@@ -490,6 +509,7 @@ class PosStorage {
         invoiceNumber: row.invoice_number,
         status: row.status,
         orderType: row.order_type,
+        orderChannel: ORDER_CHANNELS.has(row.order_channel ?? null) ? (row.order_channel ?? null) : null,
         tableLabel: row.table_label,
         kitchenStatus: row.kitchen_status ?? "not_sent",
         paymentMode: this.parseOrderPaymentMode(row.payment_json),
@@ -529,6 +549,7 @@ class PosStorage {
         local_order_id: string;
         invoice_number: string;
         order_type: PosOrder["orderType"];
+        order_channel: PosOrder["orderChannel"];
         table_label: string | null;
         kitchen_status: PosOrder["kitchenStatus"];
         customer_snapshot_json: string | null;
@@ -536,7 +557,7 @@ class PosStorage {
         totals_json: string;
         updated_at: string;
       }>(
-        "SELECT local_order_id, invoice_number, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, updated_at FROM orders_local WHERE status = 'pending' ORDER BY updated_at DESC"
+        "SELECT local_order_id, invoice_number, order_type, order_channel, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, updated_at FROM orders_local WHERE status = 'pending' ORDER BY updated_at DESC"
       );
 
       return rows.map((row) => {
@@ -550,6 +571,7 @@ class PosStorage {
           customerName: customerSnapshot?.name ?? "Walk-in",
           customerPhone: customerSnapshot?.phone ?? "-",
           orderType: row.order_type ?? "takeaway",
+          orderChannel: ORDER_CHANNELS.has(row.order_channel ?? null) ? (row.order_channel ?? null) : null,
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "not_sent",
           totalAmount: Number(totals.totalAmount ?? 0),
@@ -570,6 +592,7 @@ class PosStorage {
             customerName: order.customer?.name ?? "Walk-in",
             customerPhone: order.customer?.phone ?? "-",
             orderType: order.orderType,
+            orderChannel: ORDER_CHANNELS.has(order.orderChannel ?? null) ? (order.orderChannel ?? null) : null,
             tableLabel: order.tableLabel,
             kitchenStatus: order.kitchenStatus,
             totalAmount: order.totals.totalAmount,
@@ -588,6 +611,7 @@ class PosStorage {
         invoice_number: string;
         status: PosOrder["status"];
         order_type: PosOrder["orderType"];
+        order_channel: PosOrder["orderChannel"];
         table_label: string | null;
         kitchen_status: PosOrder["kitchenStatus"];
         customer_snapshot_json: string | null;
@@ -596,7 +620,7 @@ class PosStorage {
         payment_json: string | null;
         updated_at: string;
       }>(
-        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local ORDER BY updated_at DESC LIMIT ?",
+        "SELECT local_order_id, invoice_number, status, order_type, order_channel, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local ORDER BY updated_at DESC LIMIT ?",
         [limit]
       );
 
@@ -611,6 +635,7 @@ class PosStorage {
           customerName: customerSnapshot?.name ?? "Walk-in",
           customerPhone: customerSnapshot?.phone ?? "-",
           orderType: row.order_type,
+          orderChannel: ORDER_CHANNELS.has(row.order_channel ?? null) ? (row.order_channel ?? null) : null,
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "not_sent",
           status: row.status,
@@ -633,6 +658,7 @@ class PosStorage {
             customerName: order.customer?.name ?? "Walk-in",
             customerPhone: order.customer?.phone ?? "-",
             orderType: order.orderType,
+            orderChannel: ORDER_CHANNELS.has(order.orderChannel ?? null) ? (order.orderChannel ?? null) : null,
             tableLabel: order.tableLabel,
             kitchenStatus: order.kitchenStatus,
             status: order.status,
@@ -653,6 +679,7 @@ class PosStorage {
         invoice_number: string;
         status: PosOrder["status"];
         order_type: PosOrder["orderType"];
+        order_channel: PosOrder["orderChannel"];
         table_label: string | null;
         kitchen_status: PosOrder["kitchenStatus"];
         customer_snapshot_json: string | null;
@@ -661,7 +688,7 @@ class PosStorage {
         payment_json: string | null;
         updated_at: string;
       }>(
-        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local WHERE status = 'paid' ORDER BY updated_at DESC LIMIT ?",
+        "SELECT local_order_id, invoice_number, status, order_type, order_channel, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local WHERE status = 'paid' ORDER BY updated_at DESC LIMIT ?",
         [limit]
       );
 
@@ -676,6 +703,7 @@ class PosStorage {
           customerName: customerSnapshot?.name ?? "Walk-in",
           customerPhone: customerSnapshot?.phone ?? "-",
           orderType: row.order_type,
+          orderChannel: ORDER_CHANNELS.has(row.order_channel ?? null) ? (row.order_channel ?? null) : null,
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "not_sent",
           status: row.status,
@@ -699,6 +727,7 @@ class PosStorage {
             customerName: order.customer?.name ?? "Walk-in",
             customerPhone: order.customer?.phone ?? "-",
             orderType: order.orderType,
+            orderChannel: ORDER_CHANNELS.has(order.orderChannel ?? null) ? (order.orderChannel ?? null) : null,
             tableLabel: order.tableLabel,
             kitchenStatus: order.kitchenStatus,
             status: order.status,
@@ -720,6 +749,7 @@ class PosStorage {
         invoice_number: string;
         status: PosOrder["status"];
         order_type: PosOrder["orderType"];
+        order_channel: PosOrder["orderChannel"];
         table_label: string | null;
         kitchen_status: PosOrder["kitchenStatus"];
         customer_snapshot_json: string | null;
@@ -744,6 +774,7 @@ class PosStorage {
           invoiceNumber: row.invoice_number,
           status: row.status,
           orderType: row.order_type,
+          orderChannel: ORDER_CHANNELS.has(row.order_channel ?? null) ? (row.order_channel ?? null) : null,
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "queued",
           paymentMode: this.parseOrderPaymentMode(row.payment_json),
@@ -1043,13 +1074,14 @@ class PosStorage {
     await this.ensureInitialized();
     if (this.db) {
       await this.db.execute(
-        "INSERT OR REPLACE INTO pending_bills (local_order_id, invoice_number, customer_name, customer_phone, order_type, table_label, total_amount, line_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO pending_bills (local_order_id, invoice_number, customer_name, customer_phone, order_type, order_channel, table_label, total_amount, line_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           bill.localOrderId,
           bill.invoiceNumber,
           bill.customerName,
           bill.customerPhone,
           bill.orderType,
+          bill.orderChannel,
           bill.tableLabel,
           bill.totalAmount,
           bill.lineCount,

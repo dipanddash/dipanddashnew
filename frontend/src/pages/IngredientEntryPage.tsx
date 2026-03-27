@@ -219,6 +219,7 @@ export const IngredientEntryPage = () => {
   const [allocationStats, setAllocationStats] = useState<IngredientAllocationStats | null>(null);
   const [allocationStatsLoading, setAllocationStatsLoading] = useState(true);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [allocationSaveLoading, setAllocationSaveLoading] = useState(false);
   const [posBillingControl, setPosBillingControl] = useState<PosBillingControl | null>(null);
   const [posControlLoading, setPosControlLoading] = useState(false);
   const assignAllDialog = useDisclosure();
@@ -295,7 +296,7 @@ export const IngredientEntryPage = () => {
       setAllocationPagination(response.data.pagination);
       setAllocationDrafts(
         response.data.rows.reduce<Record<string, string>>((accumulator, row) => {
-          accumulator[row.ingredientId] = String(row.allocatedQuantity);
+          accumulator[row.ingredientId] = "";
           return accumulator;
         }, {})
       );
@@ -403,6 +404,29 @@ export const IngredientEntryPage = () => {
   const categoryOptions = useMemo(
     () => allCategories.map((category) => ({ label: category.name, value: category.id })),
     [allCategories]
+  );
+
+  const dirtyAllocationRows = useMemo(
+    () =>
+      allocationRows.filter((row) => {
+        const rawDraft = allocationDrafts[row.ingredientId];
+        if (rawDraft === undefined) {
+          return false;
+        }
+
+        const trimmed = rawDraft.trim();
+        if (!trimmed.length) {
+          return false;
+        }
+
+        const draftValue = Number(trimmed);
+        if (!Number.isFinite(draftValue)) {
+          return true;
+        }
+
+        return draftValue > 0;
+      }),
+    [allocationDrafts, allocationRows]
   );
 
   const handleCategorySubmit = useCallback(
@@ -585,46 +609,92 @@ export const IngredientEntryPage = () => {
     [fetchAllocations, fetchIngredients, runRowAction, toast]
   );
 
-  const handleSaveAllocation = useCallback(
-    async (row: AllocationRow) => {
-      const draftValue = Number(allocationDrafts[row.ingredientId]);
-      if (!Number.isFinite(draftValue) || draftValue < 0) {
-        toast.warning("Allocated quantity must be a valid non-negative number.");
+  const handleSaveAllocationChanges = useCallback(async () => {
+    if (!dirtyAllocationRows.length) {
+      toast.info("No allocation changes to save.");
+      return;
+    }
+
+    type DraftPayload = { row: AllocationRow; allocatedQuantity: number; addQuantity: number };
+    const payloadRows: DraftPayload[] = [];
+
+    for (const row of dirtyAllocationRows) {
+      const rawDraft = allocationDrafts[row.ingredientId];
+      const trimmed = rawDraft?.trim() ?? "";
+
+      if (!trimmed.length) {
+        toast.warning(`Enter allocation quantity for ${row.ingredientName}.`);
         return;
       }
-      const maxAllowed = Number((row.allocatedQuantity + row.totalStock).toFixed(3));
-      if (draftValue > maxAllowed + 0.000001) {
+
+      const draftValue = Number(trimmed);
+      if (!Number.isFinite(draftValue) || draftValue <= 0) {
+        toast.warning(`Add quantity for ${row.ingredientName} must be a valid number greater than zero.`);
+        return;
+      }
+
+      const addQuantity = Number(draftValue.toFixed(3));
+
+      const maxAddable = Number(row.totalStock.toFixed(3));
+      if (addQuantity > maxAddable + 0.000001) {
         toast.warning(
-          `Insufficient stock. Maximum allocatable is ${formatQuantityWithUnit(maxAllowed, row.unit)}.`
+          `Insufficient stock for ${row.ingredientName}. Maximum addable is ${formatQuantityWithUnit(maxAddable, row.unit)}.`
         );
         return;
       }
 
-      await runRowAction(`alloc-${row.ingredientId}`, async () => {
+      const nextAllocatedTotal = Number((row.allocatedQuantity + addQuantity).toFixed(3));
+      payloadRows.push({ row, allocatedQuantity: nextAllocatedTotal, addQuantity });
+    }
+
+    setAllocationSaveLoading(true);
+    let successCount = 0;
+    const failedRows: string[] = [];
+
+    try {
+      for (const payload of payloadRows) {
         try {
-          const response = await ingredientsService.saveAllocation({
-            ingredientId: row.ingredientId,
+          await ingredientsService.saveAllocation({
+            ingredientId: payload.row.ingredientId,
             date: allocationDate,
-            allocatedQuantity: draftValue
+            allocatedQuantity: payload.allocatedQuantity
           });
-          toast.success(response.message);
-          await Promise.all([fetchAllocations(), fetchIngredients(), fetchStatsRows(), fetchAllocationStats()]);
+          successCount += 1;
         } catch (error) {
-          toast.error(extractErrorMessage(error, "Unable to save allocation."));
+          failedRows.push(`${payload.row.ingredientName}: ${extractErrorMessage(error, "save failed")}`);
         }
-      });
-    },
-    [
-      allocationDate,
-      allocationDrafts,
-      fetchAllocations,
-      fetchIngredients,
-      fetchStatsRows,
-      fetchAllocationStats,
-      runRowAction,
-      toast
-    ]
-  );
+      }
+
+      if (successCount > 0) {
+        await Promise.all([fetchAllocations(), fetchIngredients(), fetchStatsRows(), fetchAllocationStats()]);
+      }
+
+      if (!failedRows.length) {
+        toast.success(`Allocated additional stock for ${successCount} ingredient(s).`);
+        return;
+      }
+
+      if (successCount > 0) {
+        toast.warning(
+          `Saved ${successCount} ingredient(s). Failed ${failedRows.length}. ${failedRows.slice(0, 2).join(" | ")}`
+        );
+        return;
+      }
+
+      toast.error(`Unable to save allocation changes. ${failedRows.slice(0, 2).join(" | ")}`);
+    } finally {
+      setAllocationSaveLoading(false);
+    }
+  }, [
+    allocationDate,
+    allocationDrafts,
+    dirtyAllocationRows,
+    fetchAllocationStats,
+    fetchAllocations,
+    fetchIngredients,
+    fetchStatsRows,
+    toast
+  ]);
 
   const handleAssignAllStock = useCallback(async () => {
     setBulkActionLoading(true);
@@ -869,31 +939,43 @@ export const IngredientEntryPage = () => {
         {
           key: "allocated",
           header: "Allocated",
-          render: (row: AllocationRow) => (
-            <HStack align="end">
-              <Input
-                size="sm"
-                type="number"
-                step="0.001"
-                value={allocationDrafts[row.ingredientId] ?? ""}
-                onChange={(event) =>
-                  setAllocationDrafts((previous) => ({
-                    ...previous,
-                    [row.ingredientId]: event.target.value
-                  }))
-                }
-                bg="white"
-                maxW="110px"
-              />
-              <AppButton
-                size="sm"
-                onClick={() => void handleSaveAllocation(row)}
-                isLoading={Boolean(rowActionLoading[`alloc-${row.ingredientId}`])}
-              >
-                Save
-              </AppButton>
-            </HStack>
-          )
+          render: (row: AllocationRow) => {
+            const rawDraft = allocationDrafts[row.ingredientId] ?? "";
+            const trimmedDraft = rawDraft.trim();
+            const parsedDraft = Number(trimmedDraft);
+            const addQuantity = Number.isFinite(parsedDraft) && parsedDraft > 0 ? Number(parsedDraft.toFixed(3)) : 0;
+            const projectedAllocated = Number((row.allocatedQuantity + addQuantity).toFixed(3));
+            const projectedStock = Number(Math.max(row.totalStock - addQuantity, 0).toFixed(3));
+
+            return (
+              <VStack align="start" spacing={1}>
+                <Text fontSize="xs" color="#7A6258">
+                  Current: {formatQuantityWithUnit(row.allocatedQuantity, row.unit)}
+                </Text>
+                <Input
+                  size="sm"
+                  type="number"
+                  step="0.001"
+                  value={rawDraft}
+                  onChange={(event) =>
+                    setAllocationDrafts((previous) => ({
+                      ...previous,
+                      [row.ingredientId]: event.target.value
+                    }))
+                  }
+                  bg="white"
+                  maxW="130px"
+                  placeholder={`Add ${row.unit}`}
+                />
+                {addQuantity > 0 ? (
+                  <Text fontSize="xs" color="#6B4F43" fontWeight={600}>
+                    New: {formatQuantityWithUnit(projectedAllocated, row.unit)} | Stock left:{" "}
+                    {formatQuantityWithUnit(projectedStock, row.unit)}
+                  </Text>
+                ) : null}
+              </VStack>
+            );
+          }
         },
         {
           key: "used",
@@ -911,7 +993,7 @@ export const IngredientEntryPage = () => {
           render: (row: AllocationRow) => statusBadge(row.status)
         }
       ] as Array<{ key: string; header: string; render?: (row: AllocationRow) => ReactNode }>,
-    [allocationDrafts, handleSaveAllocation, rowActionLoading]
+    [allocationDrafts]
   );
 
   const statsTableColumns = useMemo(
@@ -1465,6 +1547,13 @@ export const IngredientEntryPage = () => {
                       : ""}
                   </Text>
                   <HStack>
+                    <AppButton
+                      onClick={() => void handleSaveAllocationChanges()}
+                      isLoading={allocationSaveLoading}
+                      isDisabled={!dirtyAllocationRows.length || allocationLoading || bulkActionLoading}
+                    >
+                      Save Selected Allocations ({dirtyAllocationRows.length})
+                    </AppButton>
                     <AppButton
                       variant={posBillingControl?.isBillingEnabled ? "outline" : "solid"}
                       onClick={posControlDialog.onOpen}

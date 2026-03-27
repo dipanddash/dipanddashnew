@@ -1,6 +1,9 @@
 import { AppDataSource } from "../../database/data-source";
+import { UserRole } from "../../constants/roles";
+import { CashAudit } from "../cash-audit/cash-audit.entity";
 import { Invoice } from "../invoices/invoice.entity";
 import { InvoiceLine } from "../invoices/invoice-line.entity";
+import { InvoicePayment } from "../invoices/invoice-payment.entity";
 
 type SalesStatsInput = {
   dateFrom?: string;
@@ -40,6 +43,52 @@ const buildDateSeries = (from: Date, to: Date) => {
 export class DashboardService {
   private readonly invoiceRepository = AppDataSource.getRepository(Invoice);
   private readonly invoiceLineRepository = AppDataSource.getRepository(InvoiceLine);
+  private readonly invoicePaymentRepository = AppDataSource.getRepository(InvoicePayment);
+  private readonly cashAuditRepository = AppDataSource.getRepository(CashAudit);
+
+  private async getDipAndDashExcessAmount(from: Date, to: Date) {
+    try {
+      const fromDay = toDay(from);
+      const toDayValue = toDay(to);
+      const rows = await this.cashAuditRepository
+        .createQueryBuilder("cashAudit")
+        .leftJoin("cashAudit.createdByUser", "createdByUser")
+        .where("cashAudit.auditDate >= :fromDay", { fromDay })
+        .andWhere("cashAudit.auditDate <= :toDay", { toDay: toDayValue })
+        .andWhere("createdByUser.role != :gamingRole", { gamingRole: UserRole.SNOOKER_STAFF })
+        .select("cashAudit.countedAmount", "countedAmount")
+        .addSelect("cashAudit.staffCashTakenAmount", "staffCashTakenAmount")
+        .addSelect("cashAudit.enteredCardAmount", "enteredCardAmount")
+        .addSelect("cashAudit.enteredUpiAmount", "enteredUpiAmount")
+        .addSelect("cashAudit.expectedCashAmount", "expectedCashAmount")
+        .addSelect("cashAudit.expectedCardAmount", "expectedCardAmount")
+        .addSelect("cashAudit.expectedUpiAmount", "expectedUpiAmount")
+        .getRawMany<{
+          countedAmount: string;
+          staffCashTakenAmount: string;
+          enteredCardAmount: string;
+          enteredUpiAmount: string;
+          expectedCashAmount: string;
+          expectedCardAmount: string;
+          expectedUpiAmount: string;
+        }>();
+
+      const totalExcessAmount = rows.reduce((sum, row) => {
+        const enteredTotal =
+          toMoney(row.countedAmount) +
+          toMoney(row.staffCashTakenAmount) +
+          toMoney(row.enteredCardAmount) +
+          toMoney(row.enteredUpiAmount);
+        const expectedTotal =
+          toMoney(row.expectedCashAmount) + toMoney(row.expectedCardAmount) + toMoney(row.expectedUpiAmount);
+        return sum + Math.max(toMoney(enteredTotal - expectedTotal), 0);
+      }, 0);
+
+      return toMoney(totalExcessAmount);
+    } catch {
+      return 0;
+    }
+  }
 
   getAdminDashboard() {
     return {
@@ -103,16 +152,29 @@ export class DashboardService {
     const paidInvoiceBase = this.invoiceRepository
       .createQueryBuilder("invoice")
       .where("invoice.status = 'paid'")
+      .andWhere("invoice.orderType != 'snooker'")
       .andWhere("invoice.createdAt >= :fromDate", { fromDate: safeFrom })
       .andWhere("invoice.createdAt <= :toDate", { toDate: safeTo });
 
     const previousPaidBase = this.invoiceRepository
       .createQueryBuilder("invoice")
       .where("invoice.status = 'paid'")
+      .andWhere("invoice.orderType != 'snooker'")
       .andWhere("invoice.createdAt >= :fromDate", { fromDate: previousFrom })
       .andWhere("invoice.createdAt <= :toDate", { toDate: previousTo });
 
-    const [summary, previousSummary, paymentRows, orderTypeRows, trendRows, topCashierRows, topItemRows] =
+    const [
+      summary,
+      previousSummary,
+      paymentRows,
+      paymentFallbackRows,
+      orderTypeRows,
+      trendRows,
+      topCashierRows,
+      topItemRows,
+      excessAmount,
+      previousExcessAmount
+    ] =
       await Promise.all([
         paidInvoiceBase
           .clone()
@@ -137,8 +199,35 @@ export class DashboardService {
           .clone()
           .select("COALESCE(SUM(invoice.totalAmount), 0)", "totalSales")
           .getRawOne<{ totalSales: string }>(),
-        paidInvoiceBase
-          .clone()
+        this.invoicePaymentRepository
+          .createQueryBuilder("payment")
+          .innerJoin(Invoice, "invoice", "invoice.id = payment.invoiceId")
+          .where("payment.status = 'success'")
+          .andWhere("invoice.status = 'paid'")
+          .andWhere("invoice.orderType != 'snooker'")
+          .andWhere("invoice.createdAt >= :fromDate", { fromDate: safeFrom })
+          .andWhere("invoice.createdAt <= :toDate", { toDate: safeTo })
+          .select("payment.mode", "paymentMode")
+          .addSelect("COUNT(payment.id)", "count")
+          .addSelect("COALESCE(SUM(payment.amount), 0)", "amount")
+          .groupBy("payment.mode")
+          .orderBy("amount", "DESC")
+          .getRawMany<{ paymentMode: string; count: string; amount: string }>(),
+        this.invoiceRepository
+          .createQueryBuilder("invoice")
+          .where("invoice.status = 'paid'")
+          .andWhere("invoice.orderType != 'snooker'")
+          .andWhere("invoice.createdAt >= :fromDate", { fromDate: safeFrom })
+          .andWhere("invoice.createdAt <= :toDate", { toDate: safeTo })
+          .andWhere((query) => {
+            const subQuery = query
+              .subQuery()
+              .select("1")
+              .from(InvoicePayment, "invoicePayment")
+              .where("invoicePayment.invoiceId = invoice.id")
+              .getQuery();
+            return `NOT EXISTS ${subQuery}`;
+          })
           .select("invoice.paymentMode", "paymentMode")
           .addSelect("COUNT(invoice.id)", "count")
           .addSelect("COALESCE(SUM(invoice.totalAmount), 0)", "amount")
@@ -183,6 +272,7 @@ export class DashboardService {
           .createQueryBuilder("line")
           .leftJoin(Invoice, "invoice", "invoice.id = line.invoiceId")
           .where("invoice.status = 'paid'")
+          .andWhere("invoice.orderType != 'snooker'")
           .andWhere("invoice.createdAt >= :fromDate", { fromDate: safeFrom })
           .andWhere("invoice.createdAt <= :toDate", { toDate: safeTo })
           .select("line.nameSnapshot", "name")
@@ -198,13 +288,37 @@ export class DashboardService {
             lineType: string;
             quantity: string;
             total: string;
-          }>()
+          }>(),
+        this.getDipAndDashExcessAmount(safeFrom, safeTo),
+        this.getDipAndDashExcessAmount(previousFrom, previousTo)
       ]);
 
-    const totalSales = toMoney(summary?.totalSales ?? 0);
-    const previousSales = toMoney(previousSummary?.totalSales ?? 0);
+    const billedSales = toMoney(summary?.totalSales ?? 0);
+    const totalSales = toMoney(billedSales + excessAmount);
+    const previousBilledSales = toMoney(previousSummary?.totalSales ?? 0);
+    const previousSales = toMoney(previousBilledSales + previousExcessAmount);
     const salesGrowthPercentage =
       previousSales > 0 ? Number((((totalSales - previousSales) / previousSales) * 100).toFixed(2)) : null;
+
+    const paymentMap = new Map<string, { paymentMode: string; count: number; amount: number }>();
+    [...paymentRows, ...paymentFallbackRows].forEach((row) => {
+      const key = row.paymentMode ?? "cash";
+      const existing = paymentMap.get(key) ?? {
+        paymentMode: key,
+        count: 0,
+        amount: 0
+      };
+      existing.count += Number(row.count ?? 0);
+      existing.amount = toMoney(existing.amount + toMoney(row.amount ?? 0));
+      paymentMap.set(key, existing);
+    });
+
+    const paymentBreakdown = [...paymentMap.values()].sort((a, b) => b.amount - a.amount);
+    const cashSales = paymentBreakdown.find((row) => row.paymentMode === "cash")?.amount ?? 0;
+    const cardSales = paymentBreakdown.find((row) => row.paymentMode === "card")?.amount ?? 0;
+    const upiSales = paymentBreakdown.find((row) => row.paymentMode === "upi")?.amount ?? 0;
+    const mixedSales = paymentBreakdown.find((row) => row.paymentMode === "mixed")?.amount ?? 0;
+    const adjustedCashSales = toMoney(cashSales + excessAmount);
 
     const trendMap = new Map(
       trendRows.map((row) => [
@@ -229,18 +343,24 @@ export class DashboardService {
       },
       cards: {
         totalSales,
+        billedSales,
+        excessAmount,
         totalOrders: Number(summary?.totalOrders ?? 0),
         averageOrderValue: toMoney(summary?.avgOrderValue ?? 0),
         totalDiscount: toMoney(summary?.discountAmount ?? 0),
         totalTax: toMoney(summary?.taxAmount ?? 0),
         uniqueCustomers: Number(summary?.uniqueCustomers ?? 0),
         previousPeriodSales: previousSales,
-        salesGrowthPercentage
+        salesGrowthPercentage,
+        cashSales: adjustedCashSales,
+        cardSales: toMoney(cardSales),
+        upiSales: toMoney(upiSales),
+        mixedSales: toMoney(mixedSales)
       },
-      paymentModeBreakdown: paymentRows.map((row) => ({
+      paymentModeBreakdown: paymentBreakdown.map((row) => ({
         paymentMode: row.paymentMode,
-        count: Number(row.count ?? 0),
-        amount: toMoney(row.amount ?? 0)
+        count: row.count,
+        amount: toMoney(row.amount)
       })),
       orderTypeBreakdown: orderTypeRows.map((row) => ({
         orderType: row.orderType,

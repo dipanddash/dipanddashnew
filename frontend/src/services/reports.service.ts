@@ -7,8 +7,17 @@ type GenerateReportParams = {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  outletId?: string;
   page?: number;
   limit?: number;
+};
+
+type StockConsumptionExportParams = {
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  outletId?: string;
+  format: "excel" | "pdf";
 };
 
 export const reportsService = {
@@ -21,6 +30,11 @@ export const reportsService = {
       params
     });
     return response.data;
+  },
+  async exportStockConsumption(params: StockConsumptionExportParams) {
+    return apiClient.get<Blob>("/reports/stock-consumption/export", {
+      params,
+      responseType: "blob"
+    });
   }
 };
-

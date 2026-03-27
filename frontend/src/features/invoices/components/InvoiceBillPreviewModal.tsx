@@ -48,6 +48,9 @@ const formatDate = (value: string | null | undefined) => {
   return new Date(value).toISOString().slice(0, 10);
 };
 
+const formatPaymentMode = (mode: InvoiceDetail["paymentMode"] | null | undefined) =>
+  mode ? mode.toUpperCase() : "-";
+
 const parseLineAddOns = (line: InvoiceLineRow): InvoiceLineAddOn[] => {
   const addOns = (line.meta as { addOns?: unknown } | null)?.addOns;
   if (!Array.isArray(addOns)) {
@@ -152,6 +155,10 @@ const buildBillDocumentHtml = (invoice: InvoiceDetail, lines: InvoiceLineRow[]) 
             <div class="row small" style="margin-top:4px;">
               <div><b>Customer:</b> ${invoice.customer?.name ?? "Walk-in Customer"}</div>
               <div><b>Cashier:</b> ${invoice.staff?.fullName ?? "-"}</div>
+            </div>
+            <div class="row small" style="margin-top:4px;">
+              <div><b>Payment Mode:</b> ${formatPaymentMode(invoice.paymentMode)}</div>
+              <div></div>
             </div>
           </div>
 
@@ -311,6 +318,15 @@ export const InvoiceBillPreviewModal = ({
                       </Text>{" "}
                       {invoice.staff?.fullName ?? "-"}
                     </Text>
+                  </HStack>
+                  <HStack justify="space-between" mt={1} fontSize="sm">
+                    <Text>
+                      <Text as="span" fontWeight={700}>
+                        Payment Mode:
+                      </Text>{" "}
+                      {formatPaymentMode(invoice.paymentMode)}
+                    </Text>
+                    <Text />
                   </HStack>
                 </Box>
 

@@ -16,6 +16,9 @@ import { gamingRoutes } from "../modules/gaming/gaming.routes";
 import { procurementRoutes } from "../modules/procurement/procurement.routes";
 import { cashAuditRoutes } from "../modules/cash-audit/cash-audit.routes";
 import { reportsRoutes } from "../modules/reports/reports.routes";
+import { dumpRoutes } from "../modules/dump/dump.routes";
+import { outletsRoutes } from "../modules/outlets/outlets.routes";
+import { outletTransfersRoutes } from "../modules/outlet-transfers/outlet-transfers.routes";
 
 const router = Router();
 
@@ -35,5 +38,8 @@ router.use("/gaming", gamingRoutes);
 router.use("/procurement", procurementRoutes);
 router.use("/cash-audit", cashAuditRoutes);
 router.use("/reports", reportsRoutes);
+router.use("/dump", dumpRoutes);
+router.use("/outlets", outletsRoutes);
+router.use("/outlet-transfers", outletTransfersRoutes);
 
 export const apiRoutes = router;

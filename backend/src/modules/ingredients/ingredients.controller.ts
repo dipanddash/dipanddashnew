@@ -164,10 +164,19 @@ export class IngredientsController {
   };
 
   getAllocations = async (req: Request, res: Response): Promise<Response> => {
+    const overallQuery = req.query.overall;
+    const overall =
+      typeof overallQuery === "string"
+        ? ["true", "1", "yes"].includes(overallQuery.toLowerCase())
+        : Array.isArray(overallQuery)
+          ? ["true", "1", "yes"].includes(String(overallQuery[0]).toLowerCase())
+          : false;
+
     const data = await this.ingredientsService.getAllocations({
       date: typeof req.query.date === "string" ? req.query.date : "",
       search: typeof req.query.search === "string" ? req.query.search : undefined,
       categoryId: typeof req.query.categoryId === "string" ? req.query.categoryId : undefined,
+      overall,
       page: parsePositiveInt(req.query.page, 1),
       limit: parsePositiveInt(req.query.limit, 10)
     });

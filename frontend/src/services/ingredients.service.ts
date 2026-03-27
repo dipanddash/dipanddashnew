@@ -140,7 +140,8 @@ export const ingredientsService = {
     return response.data;
   },
   getAllocations: async (params: {
-    date: string;
+    date?: string;
+    overall?: boolean;
     search?: string;
     categoryId?: string;
     page?: number;
@@ -149,7 +150,7 @@ export const ingredientsService = {
     const response = await apiClient.get<ApiSuccess<AllocationListResponse>>("/ingredients/allocations", { params });
     return response.data;
   },
-  getAllocationStats: async (params: { date: string; search?: string; categoryId?: string }) => {
+  getAllocationStats: async (params: { date?: string; search?: string; categoryId?: string }) => {
     const response = await apiClient.get<ApiSuccess<AllocationStatsResponse>>("/ingredients/allocations/stats", {
       params
     });

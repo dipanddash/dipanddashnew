@@ -1,5 +1,7 @@
 export type SalesStatsCards = {
   totalSales: number;
+  billedSales: number;
+  excessAmount: number;
   totalOrders: number;
   averageOrderValue: number;
   totalDiscount: number;
@@ -7,6 +9,10 @@ export type SalesStatsCards = {
   uniqueCustomers: number;
   previousPeriodSales: number;
   salesGrowthPercentage: number | null;
+  cashSales: number;
+  cardSales: number;
+  upiSales: number;
+  mixedSales: number;
 };
 
 export type SalesStatsResponse = {

@@ -34,6 +34,11 @@ import { Product } from "../modules/procurement/product.entity";
 import { PurchaseOrder } from "../modules/procurement/purchase-order.entity";
 import { PurchaseOrderLine } from "../modules/procurement/purchase-order-line.entity";
 import { CashAudit } from "../modules/cash-audit/cash-audit.entity";
+import { DumpEntry } from "../modules/dump/dump.entity";
+import { Outlet } from "../modules/outlets/outlet.entity";
+import { OutletTransfer } from "../modules/outlet-transfers/outlet-transfer.entity";
+import { OutletIngredientStock } from "../modules/outlet-transfers/outlet-ingredient-stock.entity";
+import { OutletProductStock } from "../modules/outlet-transfers/outlet-product-stock.entity";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -77,7 +82,12 @@ export const AppDataSource = new DataSource({
     Product,
     PurchaseOrder,
     PurchaseOrderLine,
-    CashAudit
+    CashAudit,
+    DumpEntry,
+    Outlet,
+    OutletTransfer,
+    OutletIngredientStock,
+    OutletProductStock
   ],
   migrations: ["src/database/migrations/*.ts"]
 });

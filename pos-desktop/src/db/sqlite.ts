@@ -44,6 +44,13 @@ const parseSqlStatements = (sql: string) =>
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 
+const ORDER_PAYMENT_MODES = new Set<PosOrder["paymentMode"]>(["cash", "card", "upi", "mixed", null]);
+
+const normalizeOrderRow = (row: PosOrder): PosOrder => ({
+  ...row,
+  paymentMode: ORDER_PAYMENT_MODES.has(row.paymentMode ?? null) ? (row.paymentMode ?? null) : null
+});
+
 const normalizePlayerCount = (playerCount: unknown, customers: unknown) => {
   const parsed = Number(playerCount);
   if (Number.isFinite(parsed) && parsed >= 1) {
@@ -168,7 +175,7 @@ class PosStorage {
             ...emptyState(),
             ...parsed,
             customers: parsed.customers ?? [],
-            orders: parsed.orders ?? [],
+            orders: (parsed.orders ?? []).map((row) => normalizeOrderRow(row as PosOrder)),
             gamingBookings: (parsed.gamingBookings ?? []).map((row) =>
               normalizeGamingBookingRow(row as GamingBooking)
             ),
@@ -191,6 +198,38 @@ class PosStorage {
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
   };
+
+  private serializeOrderPayment(order: PosOrder) {
+    if (!order.paymentMode) {
+      return null;
+    }
+    return JSON.stringify({
+      mode: order.paymentMode
+    });
+  }
+
+  private parseOrderPaymentMode(paymentJson: string | null): PosOrder["paymentMode"] {
+    if (!paymentJson) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(paymentJson) as { mode?: unknown } | Array<{ mode?: unknown }>;
+      if (Array.isArray(parsed)) {
+        const mode = parsed[0]?.mode;
+        if (typeof mode === "string" && ORDER_PAYMENT_MODES.has(mode as PosOrder["paymentMode"])) {
+          return mode as PosOrder["paymentMode"];
+        }
+        return null;
+      }
+
+      if (typeof parsed.mode === "string" && ORDER_PAYMENT_MODES.has(parsed.mode as PosOrder["paymentMode"])) {
+        return parsed.mode as PosOrder["paymentMode"];
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 
   async getSetting(key: string) {
     await this.ensureInitialized();
@@ -398,7 +437,7 @@ class PosStorage {
           JSON.stringify(order.appliedOffer),
           order.notes,
           JSON.stringify(order.totals),
-          null,
+          this.serializeOrderPayment(order),
           order.syncStatus,
           order.createdAt,
           order.updatedAt
@@ -407,11 +446,12 @@ class PosStorage {
       return;
     }
 
+    const normalizedOrder = normalizeOrderRow(order);
     const index = this.state.orders.findIndex((entry) => entry.localOrderId === order.localOrderId);
     if (index >= 0) {
-      this.state.orders[index] = order;
+      this.state.orders[index] = normalizedOrder;
     } else {
-      this.state.orders.unshift(order);
+      this.state.orders.unshift(normalizedOrder);
     }
     this.persistBrowserState();
   }
@@ -433,6 +473,7 @@ class PosStorage {
         offer_json: string | null;
         notes: string | null;
         totals_json: string;
+        payment_json: string | null;
         sync_status: PosOrder["syncStatus"];
         created_at: string;
         updated_at: string;
@@ -451,6 +492,7 @@ class PosStorage {
         orderType: row.order_type,
         tableLabel: row.table_label,
         kitchenStatus: row.kitchen_status ?? "not_sent",
+        paymentMode: this.parseOrderPaymentMode(row.payment_json),
         customer: customerSnapshot
           ? ({
               localId: customerSnapshot.localId,
@@ -475,7 +517,8 @@ class PosStorage {
       } satisfies PosOrder;
     }
 
-    return this.state.orders.find((entry) => entry.localOrderId === localOrderId) ?? null;
+    const row = this.state.orders.find((entry) => entry.localOrderId === localOrderId);
+    return row ? normalizeOrderRow(row) : null;
   }
 
   async listPendingBills() {
@@ -550,9 +593,10 @@ class PosStorage {
         customer_snapshot_json: string | null;
         lines_json: string;
         totals_json: string;
+        payment_json: string | null;
         updated_at: string;
       }>(
-        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, updated_at FROM orders_local ORDER BY updated_at DESC LIMIT ?",
+        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local ORDER BY updated_at DESC LIMIT ?",
         [limit]
       );
 
@@ -570,6 +614,7 @@ class PosStorage {
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "not_sent",
           status: row.status,
+          paymentMode: this.parseOrderPaymentMode(row.payment_json),
           totalAmount: Number(totals.totalAmount ?? 0),
           lineCount: Array.isArray(lines) ? lines.length : 0,
           updatedAt: row.updated_at
@@ -591,6 +636,7 @@ class PosStorage {
             tableLabel: order.tableLabel,
             kitchenStatus: order.kitchenStatus,
             status: order.status,
+            paymentMode: order.paymentMode ?? null,
             totalAmount: order.totals.totalAmount,
             lineCount: order.lines.length,
             updatedAt: order.updatedAt
@@ -612,9 +658,10 @@ class PosStorage {
         customer_snapshot_json: string | null;
         lines_json: string;
         totals_json: string;
+        payment_json: string | null;
         updated_at: string;
       }>(
-        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, updated_at FROM orders_local WHERE status = 'paid' ORDER BY updated_at DESC LIMIT ?",
+        "SELECT local_order_id, invoice_number, status, order_type, table_label, kitchen_status, customer_snapshot_json, lines_json, totals_json, payment_json, updated_at FROM orders_local WHERE status = 'paid' ORDER BY updated_at DESC LIMIT ?",
         [limit]
       );
 
@@ -632,6 +679,7 @@ class PosStorage {
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "not_sent",
           status: row.status,
+          paymentMode: this.parseOrderPaymentMode(row.payment_json),
           totalAmount: Number(totals.totalAmount ?? 0),
           lineCount: Array.isArray(lines) ? lines.length : 0,
           updatedAt: row.updated_at
@@ -654,6 +702,7 @@ class PosStorage {
             tableLabel: order.tableLabel,
             kitchenStatus: order.kitchenStatus,
             status: order.status,
+            paymentMode: order.paymentMode ?? null,
             totalAmount: order.totals.totalAmount,
             lineCount: order.lines.length,
             updatedAt: order.updatedAt
@@ -678,6 +727,7 @@ class PosStorage {
         offer_json: string | null;
         notes: string | null;
         totals_json: string;
+        payment_json: string | null;
         sync_status: PosOrder["syncStatus"];
         created_at: string;
         updated_at: string;
@@ -696,6 +746,7 @@ class PosStorage {
           orderType: row.order_type,
           tableLabel: row.table_label,
           kitchenStatus: row.kitchen_status ?? "queued",
+          paymentMode: this.parseOrderPaymentMode(row.payment_json),
           customer: customerSnapshot
             ? ({
                 localId: customerSnapshot.localId,
@@ -724,7 +775,8 @@ class PosStorage {
     return [...this.state.orders]
       .filter((order) => order.status === "pending" && order.kitchenStatus !== "not_sent")
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((row) => normalizeOrderRow(row));
   }
 
   async saveGamingBooking(booking: GamingBooking) {

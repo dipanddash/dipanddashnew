@@ -27,6 +27,7 @@ export class CashAuditController {
     const data = await this.cashAuditService.listAdminRecords({
       dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
       dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
+      section: typeof req.query.section === "string" ? (req.query.section as "dip_and_dash" | "gaming") : undefined,
       search: typeof req.query.search === "string" ? req.query.search : undefined,
       page: parsePositiveInt(req.query.page, 1),
       limit: parsePositiveInt(req.query.limit, 10)
@@ -38,7 +39,8 @@ export class CashAuditController {
   getAdminStats = async (req: Request, res: Response): Promise<Response> => {
     const data = await this.cashAuditService.getAdminStats({
       dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
-      dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined
+      dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
+      section: typeof req.query.section === "string" ? (req.query.section as "dip_and_dash" | "gaming") : undefined
     });
 
     return sendSuccess(res, StatusCodes.OK, "Cash audit stats fetched successfully.", data);
@@ -47,5 +49,16 @@ export class CashAuditController {
   getStaffLastAuditInfo = async (_req: Request, res: Response): Promise<Response> => {
     const data = await this.cashAuditService.getStaffLastAuditInfo();
     return sendSuccess(res, StatusCodes.OK, "Last cash audit status fetched successfully.", data);
+  };
+
+  getStaffExpectedBreakdown = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) {
+      throw new AppError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.UNAUTHORIZED);
+    }
+
+    const data = await this.cashAuditService.getStaffExpectedBreakdown(req.user, {
+      auditDate: typeof req.query.auditDate === "string" ? req.query.auditDate : undefined
+    });
+    return sendSuccess(res, StatusCodes.OK, "Expected payment breakdown fetched successfully.", data);
   };
 }

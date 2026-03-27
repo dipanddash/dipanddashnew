@@ -1,5 +1,5 @@
 import { apiClient } from "@/lib/api-client";
-import type { CashAuditEntry, CashAuditLastInfo } from "@/types/pos";
+import type { CashAuditEntry, CashAuditExpectedBreakdown, CashAuditLastInfo } from "@/types/pos";
 
 type ApiSuccess<T> = {
   success: true;
@@ -10,6 +10,13 @@ type ApiSuccess<T> = {
 export const cashAuditService = {
   async getLastAuditInfo() {
     const response = await apiClient.get<ApiSuccess<CashAuditLastInfo>>("/cash-audit/staff/last");
+    return response.data.data;
+  },
+
+  async getExpectedBreakdown(params?: { auditDate?: string }) {
+    const response = await apiClient.get<ApiSuccess<CashAuditExpectedBreakdown>>("/cash-audit/staff/expected", {
+      params
+    });
     return response.data.data;
   },
 

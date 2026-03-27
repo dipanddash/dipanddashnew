@@ -59,6 +59,9 @@ const resolveOrderType = (channel: NewOrderPageProps["channel"]) => {
   }
 };
 
+const toPaymentModeLabel = (value: PosOrder["paymentMode"] | null | undefined) =>
+  value ? value.toUpperCase() : "-";
+
 export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
   const toast = useToast();
   const { session } = usePosAuth();
@@ -133,16 +136,15 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
         ? "Delivery"
       : "Takeaway";
 
-  const hasTodayAllocation = useMemo(() => {
+  const hasAllocatedStock = useMemo(() => {
     if (!catalog) {
       return false;
     }
     if (!catalog.controls.enforceDailyAllocation) {
       return true;
     }
-    const today = new Date().toISOString().slice(0, 10);
     return catalog.allocations.some(
-      (allocation) => allocation.date === today && allocation.allocatedQuantity > 0
+      (allocation) => allocation.remainingQuantity > 0
     );
   }, [catalog]);
 
@@ -186,12 +188,12 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
       return;
     }
 
-    if (!hasTodayAllocation) {
+    if (!hasAllocatedStock) {
       toast({
         status: "warning",
-        title: "Daily stock allocation missing",
+        title: "Allocated stock missing",
         description:
-          "Admin must allocate today ingredient stock before staff can take orders."
+          "Admin must allocate ingredient stock before staff can take orders."
       });
       return;
     }
@@ -205,7 +207,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     clearOrder,
     closingStatus,
     currentOrder.orderType,
-    hasTodayAllocation,
+    hasAllocatedStock,
     openCustomerStartModal,
     setOrderType,
     toast
@@ -412,9 +414,9 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
           <Text color="#6D584E" fontSize="sm">
             Invoice: {currentOrder.invoiceNumber}
           </Text>
-          {!hasTodayAllocation ? (
+          {!hasAllocatedStock ? (
             <Text fontSize="xs" color="#B91C1C" fontWeight={700}>
-              Allocation missing for today
+              Allocated stock unavailable
             </Text>
           ) : null}
           {closingStatus && !closingStatus.canTakeOrders ? (
@@ -651,6 +653,15 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
                       </Text>{" "}
                       {session?.fullName ?? "-"}
                     </Text>
+                  </HStack>
+                  <HStack justify="space-between" mt={1} fontSize="sm">
+                    <Text>
+                      <Text as="span" fontWeight={700}>
+                        Payment Mode:
+                      </Text>{" "}
+                      {toPaymentModeLabel(previewOrder.paymentMode)}
+                    </Text>
+                    <Text />
                   </HStack>
                   {previewOrder.orderType === "dine_in" ? (
                     <HStack justify="space-between" mt={1} fontSize="sm">

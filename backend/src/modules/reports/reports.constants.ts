@@ -171,7 +171,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
   {
     key: "stock_consumption_report",
     title: "Stock Consumption Report",
-    description: "Ingredient consumption and overuse tracking.",
+    description: "Day-wise opening stock, dump, consumption, transfer in/out and closing stock.",
     category: "Inventory"
   },
   {

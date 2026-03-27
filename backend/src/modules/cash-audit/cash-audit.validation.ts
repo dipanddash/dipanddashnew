@@ -4,6 +4,7 @@ import { CASH_DENOMINATIONS } from "./cash-audit.constants";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const denominationKeySet = new Set(CASH_DENOMINATIONS.map((value) => String(value)));
+const adminSectionEnum = z.enum(["dip_and_dash", "gaming"]);
 
 const denominationCountsSchema = z
   .record(z.string(), z.coerce.number().int().min(0, "Count cannot be negative"))
@@ -32,6 +33,7 @@ export const cashAuditAdminListSchema = z.object({
   query: z.object({
     dateFrom: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
     dateTo: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
+    section: adminSectionEnum.optional(),
     search: z.string().trim().max(120).optional(),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(10)
@@ -41,10 +43,17 @@ export const cashAuditAdminListSchema = z.object({
 export const cashAuditAdminStatsSchema = z.object({
   query: z.object({
     dateFrom: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
-    dateTo: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional()
+    dateTo: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
+    section: adminSectionEnum.optional()
   })
 });
 
 export const cashAuditStaffLastSchema = z.object({
   query: z.object({}).optional()
+});
+
+export const cashAuditStaffExpectedSchema = z.object({
+  query: z.object({
+    auditDate: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional()
+  })
 });

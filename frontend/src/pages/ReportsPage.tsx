@@ -49,6 +49,29 @@ const formatCellValue = (key: string, value: string | number | null) => {
   return value;
 };
 
+const extractFileNameFromDisposition = (contentDisposition?: string | null) => {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+
+  const plainMatch = contentDisposition.match(/filename=([^;]+)/i);
+  if (plainMatch?.[1]) {
+    return plainMatch[1].trim();
+  }
+
+  return null;
+};
+
 const getDefaultRange = () => {
   const today = new Date();
   const to = today.toISOString().slice(0, 10);
@@ -72,6 +95,7 @@ export const ReportsPage = () => {
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
+  const [stockExportLoading, setStockExportLoading] = useState<"excel" | "pdf" | null>(null);
   const [reportData, setReportData] = useState<GeneratedReportResponse | null>(null);
   const [hasGenerated, setHasGenerated] = useState(false);
 
@@ -79,6 +103,7 @@ export const ReportsPage = () => {
     () => catalog.find((item) => item.key === selectedReportKey) ?? null,
     [catalog, selectedReportKey]
   );
+  const isStockConsumptionReport = selectedReportKey === "stock_consumption_report";
 
   const fetchCatalog = useCallback(async () => {
     setLoading(true);
@@ -164,7 +189,7 @@ export const ReportsPage = () => {
     void loadReport(1, limit, search);
   };
 
-  const handleDownload = useCallback(async () => {
+  const handleDownloadCsv = useCallback(async () => {
     if (!selectedReportKey) {
       toast.warning("Please select a report first.");
       return;
@@ -219,6 +244,41 @@ export const ReportsPage = () => {
     }
   }, [dateFrom, dateTo, search, selectedReportKey, toast]);
 
+  const handleStockExport = useCallback(
+    async (format: "excel" | "pdf") => {
+      if (!isStockConsumptionReport) {
+        toast.warning("Stock consumption export is available only for Stock Consumption Report.");
+        return;
+      }
+
+      setStockExportLoading(format);
+      try {
+        const response = await reportsService.exportStockConsumption({
+          format,
+          dateFrom,
+          dateTo,
+          search: search || undefined
+        });
+
+        const blob = new Blob([response.data], { type: response.headers["content-type"] ?? "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download =
+          extractFileNameFromDisposition(response.headers["content-disposition"]) ??
+          `stock_consumption_${dateFrom}_${dateTo}.${format === "excel" ? "xls" : "pdf"}`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        toast.success(`Stock consumption ${format.toUpperCase()} downloaded successfully.`);
+      } catch (err) {
+        toast.error(extractErrorMessage(err, `Unable to download ${format.toUpperCase()}`));
+      } finally {
+        setStockExportLoading(null);
+      }
+    },
+    [dateFrom, dateTo, isStockConsumptionReport, search, toast]
+  );
+
   if (loading) {
     return (
       <VStack align="stretch" spacing={6}>
@@ -234,14 +294,35 @@ export const ReportsPage = () => {
         subtitle="Generate business reports with date range, searchable output and export-ready data."
         action={
           <HStack spacing={2}>
-            <AppButton
-              variant="outline"
-              leftIcon={<Download size={16} />}
-              onClick={() => void handleDownload()}
-              isLoading={exportLoading}
-            >
-              Export CSV
-            </AppButton>
+            {isStockConsumptionReport ? (
+              <>
+                <AppButton
+                  variant="outline"
+                  leftIcon={<Download size={16} />}
+                  onClick={() => void handleStockExport("excel")}
+                  isLoading={stockExportLoading === "excel"}
+                >
+                  Export Excel
+                </AppButton>
+                <AppButton
+                  variant="outline"
+                  leftIcon={<Download size={16} />}
+                  onClick={() => void handleStockExport("pdf")}
+                  isLoading={stockExportLoading === "pdf"}
+                >
+                  Download PDF
+                </AppButton>
+              </>
+            ) : (
+              <AppButton
+                variant="outline"
+                leftIcon={<Download size={16} />}
+                onClick={() => void handleDownloadCsv()}
+                isLoading={exportLoading}
+              >
+                Export CSV
+              </AppButton>
+            )}
             <AppButton
               leftIcon={<FileBarChart2 size={16} />}
               onClick={handleGenerate}

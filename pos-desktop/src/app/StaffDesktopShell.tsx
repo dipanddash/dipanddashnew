@@ -26,7 +26,9 @@ import {
   FiLogOut,
   FiPackage,
   FiPlusSquare,
+  FiRepeat,
   FiShoppingBag,
+  FiTrash2,
   FiTruck,
   FiUser,
   FiUsers
@@ -48,6 +50,8 @@ import { StaffGamingBookingPage } from "@/app/StaffGamingBookingPage";
 import { SnookerDashboardPage } from "@/app/SnookerDashboardPage";
 import { StaffCashAuditPage } from "@/app/StaffCashAuditPage";
 import { StaffReportsPage } from "@/app/StaffReportsPage";
+import { StaffDumpPage } from "@/app/StaffDumpPage";
+import { StaffOutletTransferPage } from "@/app/StaffOutletTransferPage";
 import { PosTopBar } from "@/components/layout/PosTopBar";
 import { ShortcutHelpModal } from "@/components/pos/ShortcutHelpModal";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -65,6 +69,8 @@ type StaffViewKey =
   | "attendance"
   | "closing"
   | "cash-audit"
+  | "dump"
+  | "outlet-transfer"
   | "reports"
   | "profile"
   | "gaming-booking";
@@ -97,18 +103,29 @@ const MAIN_MENUS: StaffMenuConfig[] = [
   { key: "attendance", label: "Attendance", icon: FiClock },
   { key: "closing", label: "Closing", icon: FiCheckCircle },
   { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign },
+  { key: "dump", label: "Dump", icon: FiTrash2 },
+  { key: "outlet-transfer", label: "Outlet Transfer", icon: FiRepeat },
   { key: "reports", label: "Reports", icon: FiBarChart2 },
   { key: "profile", label: "Profile", icon: FiUser }
 ];
 
 const SNOOKER_STAFF_MENUS: StaffMenuConfig[] = [
   { key: "dashboard", label: "Dashboard", icon: FiGrid },
+  { key: "order", label: "Order", icon: FiClipboard },
   { key: "attendance", label: "Attendance", icon: FiClock },
   { key: "gaming-booking", label: "New Booking", icon: FiPlusSquare },
-  { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign }
+  { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign },
+  { key: "outlet-transfer", label: "Outlet Transfer", icon: FiRepeat }
 ];
 
-const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>(["dashboard", "attendance", "gaming-booking", "cash-audit"]);
+const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>([
+  "dashboard",
+  "order",
+  "attendance",
+  "gaming-booking",
+  "cash-audit",
+  "outlet-transfer"
+]);
 
 const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
   dashboard: {
@@ -154,6 +171,14 @@ const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
   "cash-audit": {
     title: "Cash Audit",
     subtitle: "Submit denomination cash counts with admin-password confirmation."
+  },
+  dump: {
+    title: "Dump / Wastage",
+    subtitle: "Record ingredient/item/product wastage with stock-linked deduction."
+  },
+  "outlet-transfer": {
+    title: "Outlet Transfer",
+    subtitle: "Move stock between outlets with source and destination updates."
   },
   reports: {
     title: "Reports",
@@ -249,6 +274,10 @@ export const StaffDesktopShell = () => {
         return <StaffClosingPage />;
       case "cash-audit":
         return <StaffCashAuditPage />;
+      case "dump":
+        return <StaffDumpPage />;
+      case "outlet-transfer":
+        return <StaffOutletTransferPage />;
       case "reports":
         return <StaffReportsPage />;
       default:
@@ -262,12 +291,12 @@ export const StaffDesktopShell = () => {
   }, [activeView, isSnookerStaff, logout, session?.fullName, session?.username]);
 
   return (
-    <Box minH="100vh" bg="linear-gradient(160deg, #FFF6E6 0%, #FFFDF9 48%, #FFFFFF 100%)">
-      <HStack align="stretch" spacing={0} minH="100vh">
+    <Box h="100vh" overflow="hidden" bg="linear-gradient(160deg, #FFF6E6 0%, #FFFDF9 48%, #FFFFFF 100%)">
+      <HStack align="stretch" spacing={0} h="100%">
         <Box
           w={isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
           minW={isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
-          h="100vh"
+          h="100%"
           transition="width 0.22s ease"
           bg="linear-gradient(180deg, #FFFDF7 0%, #FFF8ED 100%)"
           borderRight="1px solid rgba(145, 87, 61, 0.15)"
@@ -516,7 +545,7 @@ export const StaffDesktopShell = () => {
           </VStack>
         </Box>
 
-        <Box flex={1} minW={0}>
+        <Box flex={1} minW={0} h="100%" display="flex" flexDirection="column">
           <PosTopBar
             session={session}
             isOnline={isOnline}
@@ -538,7 +567,9 @@ export const StaffDesktopShell = () => {
               void logout();
             }}
           />
-          <Box p={4}>{content}</Box>
+          <Box flex={1} overflowY="auto">
+            <Box p={4}>{content}</Box>
+          </Box>
         </Box>
       </HStack>
 

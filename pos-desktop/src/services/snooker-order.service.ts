@@ -68,6 +68,7 @@ const buildNewPendingOrder = (
     tableLabel: booking.resourceLabel,
     kitchenStatus: "queued",
     status: "pending",
+    paymentMode: null,
     customer: buildCustomerSnapshot(booking),
     lines,
     appliedOffer: null,
@@ -156,15 +157,16 @@ export const snookerOrderService = {
 
     const now = new Date().toISOString();
     const order: PosOrder = existing
-      ? {
-          ...existing,
-          orderType: "snooker",
-          tableLabel: input.booking.resourceLabel,
-          customer: buildCustomerSnapshot(input.booking),
-          kitchenStatus: existing.kitchenStatus === "served" ? "queued" : existing.kitchenStatus,
-          status: existing.status === "paid" ? "paid" : "pending",
-          lines: normalizedLines,
-          notes,
+        ? {
+            ...existing,
+            orderType: "snooker",
+            tableLabel: input.booking.resourceLabel,
+            customer: buildCustomerSnapshot(input.booking),
+            kitchenStatus: existing.kitchenStatus === "served" ? "queued" : existing.kitchenStatus,
+            status: existing.status === "paid" ? "paid" : "pending",
+            paymentMode: existing.status === "paid" ? existing.paymentMode : null,
+            lines: normalizedLines,
+            notes,
           manualDiscountAmount: 0,
           appliedOffer: null,
           updatedAt: now,
@@ -231,6 +233,7 @@ export const snookerOrderService = {
       ...order,
       status: "paid",
       kitchenStatus: "served",
+      paymentMode: input.paymentMode,
       updatedAt: new Date().toISOString(),
       syncStatus: "pending"
     };
@@ -247,4 +250,3 @@ export const snookerOrderService = {
     return paidOrder;
   }
 };
-

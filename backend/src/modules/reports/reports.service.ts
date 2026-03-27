@@ -13,19 +13,34 @@ import { Invoice } from "../invoices/invoice.entity";
 import { AddOn } from "../items/add-on.entity";
 import { Combo } from "../items/combo.entity";
 import { Item } from "../items/item.entity";
+import { Outlet } from "../outlets/outlet.entity";
 import { Product } from "../procurement/product.entity";
 import { PurchaseOrder } from "../procurement/purchase-order.entity";
 import { Supplier } from "../procurement/supplier.entity";
 import { User } from "../users/user.entity";
 import { REPORT_CATALOG, REPORT_KEYS, type ReportKey } from "./reports.constants";
+import {
+  buildStockConsumptionExcelXml,
+  buildStockConsumptionHtmlDocument,
+  buildStockConsumptionPdf,
+  type StockConsumptionExportPayload
+} from "./stock-consumption-export";
 
 type GenerateReportInput = {
   reportKey: ReportKey;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  outletId?: string;
   page: number;
   limit: number;
+};
+
+type ExportStockConsumptionInput = {
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  outletId?: string;
 };
 
 type ReportUserContext = {
@@ -50,6 +65,29 @@ type ReportPayload = {
   stats: ReportStat[];
   columns: ReportColumn[];
   rows: ReportRow[];
+};
+
+type StockMovementRow = {
+  date: string;
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  quantity: number;
+};
+
+type TransferMovementRow = {
+  date: string;
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  transferredIn: number;
+  transferredOut: number;
+};
+
+type OutletContext = {
+  id: string;
+  outletCode: string;
+  outletName: string;
 };
 
 const toNumber = (value: unknown) => {
@@ -117,6 +155,7 @@ export class ReportsService {
   private readonly addOnRepository = AppDataSource.getRepository(AddOn);
   private readonly comboRepository = AppDataSource.getRepository(Combo);
   private readonly productRepository = AppDataSource.getRepository(Product);
+  private readonly outletRepository = AppDataSource.getRepository(Outlet);
   private readonly gamingRepository = AppDataSource.getRepository(GamingBooking);
   private readonly cashAuditRepository = AppDataSource.getRepository(CashAudit);
 
@@ -164,13 +203,19 @@ export class ReportsService {
     return query.andWhere("invoice.createdAt >= :from AND invoice.createdAt <= :to", { from, to });
   }
 
-  private finalizeReportRows(rows: ReportRow[], search: string | undefined, page: number, limit: number) {
+  private filterReportRows(rows: ReportRow[], search: string | undefined) {
     const normalizedSearch = search?.trim().toLowerCase();
-    const filtered = normalizedSearch
-      ? rows.filter((row) =>
-          Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch))
-        )
-      : rows;
+    if (!normalizedSearch) {
+      return rows;
+    }
+
+    return rows.filter((row) =>
+      Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch))
+    );
+  }
+
+  private finalizeReportRows(rows: ReportRow[], search: string | undefined, page: number, limit: number) {
+    const filtered = this.filterReportRows(rows, search);
 
     const safePage = Math.max(1, page || 1);
     const safeLimit = Math.min(500, Math.max(1, limit || 50));
@@ -196,7 +241,9 @@ export class ReportsService {
     }
 
     const { from, to } = getDateRange(input.dateFrom, input.dateTo);
-    const payload = await this.dispatchGenerateReport(input.reportKey, from, to);
+    const payload = await this.dispatchGenerateReport(input.reportKey, from, to, {
+      outletId: input.outletId
+    });
     const finalized = this.finalizeReportRows(payload.rows, input.search, input.page, input.limit);
 
     return {
@@ -210,6 +257,69 @@ export class ReportsService {
       columns: payload.columns,
       rows: finalized.rows,
       pagination: finalized.pagination
+    };
+  }
+
+  async exportStockConsumptionReport(
+    user: ReportUserContext,
+    input: ExportStockConsumptionInput,
+    format: "excel" | "pdf"
+  ) {
+    await this.assertAccess(user, "stock_consumption_report");
+    const { from, to } = getDateRange(input.dateFrom, input.dateTo);
+    const computed = await this.buildStockConsumptionDataset(from, to, input.outletId);
+    const filteredRows = this.filterReportRows(computed.payload.rows, input.search);
+    const exportPayload: StockConsumptionExportPayload = {
+      title: "Stock Consumption Report",
+      outletLabel: computed.outletLabel,
+      dateFrom: formatDate(from),
+      dateTo: formatDate(to),
+      generatedAt: new Date().toISOString(),
+      columns: computed.payload.columns,
+      rows: filteredRows,
+      stats: computed.payload.stats
+    };
+
+    const outletToken = computed.outletLabel
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "all_outlets";
+    const rangeToken = `${formatDate(from)}_${formatDate(to)}`;
+
+    if (format === "excel") {
+      return {
+        fileName: `stock_consumption_${outletToken}_${rangeToken}.xls`,
+        mimeType: "application/vnd.ms-excel",
+        content: buildStockConsumptionExcelXml(exportPayload)
+      };
+    }
+
+    return {
+      fileName: `stock_consumption_${outletToken}_${rangeToken}.pdf`,
+      mimeType: "application/pdf",
+      content: buildStockConsumptionPdf(exportPayload)
+    };
+  }
+
+  async exportStockConsumptionHtml(user: ReportUserContext, input: ExportStockConsumptionInput) {
+    await this.assertAccess(user, "stock_consumption_report");
+    const { from, to } = getDateRange(input.dateFrom, input.dateTo);
+    const computed = await this.buildStockConsumptionDataset(from, to, input.outletId);
+    const filteredRows = this.filterReportRows(computed.payload.rows, input.search);
+    const html = buildStockConsumptionHtmlDocument({
+      title: "Stock Consumption Report",
+      outletLabel: computed.outletLabel,
+      dateFrom: formatDate(from),
+      dateTo: formatDate(to),
+      generatedAt: new Date().toISOString(),
+      columns: computed.payload.columns,
+      rows: filteredRows,
+      stats: computed.payload.stats
+    });
+
+    return {
+      fileName: `stock_consumption_${formatDate(from)}_${formatDate(to)}.html`,
+      html
     };
   }
 
@@ -1296,50 +1406,373 @@ export class ReportsService {
     };
   }
 
-  private async generateStockConsumptionReport(from: Date, to: Date): Promise<ReportPayload> {
-    const fromDate = formatDate(from);
-    const toDate = formatDate(to);
+  private movementKey(ingredientId: string, date: string) {
+    return `${ingredientId}::${date}`;
+  }
 
+  private buildDateSeries(fromDate: string, toDate: string) {
+    const values: string[] = [];
+    const cursor = new Date(`${fromDate}T00:00:00.000Z`);
+    const end = new Date(`${toDate}T00:00:00.000Z`);
+
+    if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || cursor > end) {
+      return values;
+    }
+
+    while (cursor <= end) {
+      values.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    return values;
+  }
+
+  private async resolveOutletContext(outletId?: string): Promise<OutletContext | null> {
+    if (outletId) {
+      const selected = await this.outletRepository.findOne({
+        where: { id: outletId, isActive: true }
+      });
+      if (!selected) {
+        throw new AppError(404, "Selected outlet not found.");
+      }
+      return {
+        id: selected.id,
+        outletCode: selected.outletCode,
+        outletName: selected.outletName
+      };
+    }
+
+    const primary = await this.outletRepository
+      .createQueryBuilder("outlet")
+      .where("outlet.isActive = true")
+      .orderBy("outlet.outletCode", "ASC")
+      .getOne();
+
+    if (!primary) {
+      return null;
+    }
+
+    return {
+      id: primary.id,
+      outletCode: primary.outletCode,
+      outletName: primary.outletName
+    };
+  }
+
+  private async getUsageMovements(fromDate: string, toDate: string): Promise<StockMovementRow[]> {
     const rows = await this.usageRepository
       .createQueryBuilder("usage")
       .where("usage.usageDate >= :fromDate AND usage.usageDate <= :toDate", { fromDate, toDate })
-      .select("usage.ingredientNameSnapshot", "ingredient")
-      .addSelect("usage.baseUnit", "unit")
-      .addSelect("COALESCE(SUM(usage.consumedQuantity),0)", "consumed")
-      .addSelect("COALESCE(SUM(usage.allocatedQuantity),0)", "allocated")
-      .addSelect("COALESCE(SUM(usage.overusedQuantity),0)", "overused")
-      .groupBy("usage.ingredientNameSnapshot")
-      .addGroupBy("usage.baseUnit")
-      .orderBy("COALESCE(SUM(usage.consumedQuantity),0)", "DESC")
-      .getRawMany<{ ingredient: string; unit: string; consumed: string; allocated: string; overused: string }>();
+      .andWhere("usage.ingredientId IS NOT NULL")
+      .select("usage.usageDate", "date")
+      .addSelect("usage.ingredientId", "ingredientId")
+      .addSelect("MAX(usage.ingredientNameSnapshot)", "ingredientName")
+      .addSelect("MAX(usage.baseUnit)", "unit")
+      .addSelect("COALESCE(SUM(usage.consumedQuantity),0)", "quantity")
+      .groupBy("usage.usageDate")
+      .addGroupBy("usage.ingredientId")
+      .getRawMany<{
+        date: string;
+        ingredientId: string;
+        ingredientName: string;
+        unit: string;
+        quantity: string;
+      }>();
 
-    const parsedRows = rows.map((row) => ({
-      ingredient: row.ingredient,
-      unit: row.unit,
-      consumed: toQty(row.consumed),
-      allocated: toQty(row.allocated),
-      overused: toQty(row.overused),
-      remaining: toQty(toNumber(row.allocated) - toNumber(row.consumed)),
-      status: toNumber(row.overused) > 0 ? "OVERUSED" : "WITHIN_ALLOCATION"
+    return rows.map((row) => ({
+      date: row.date,
+      ingredientId: row.ingredientId,
+      ingredientName: row.ingredientName ?? "-",
+      unit: row.unit ?? "",
+      quantity: toQty(toNumber(row.quantity))
     }));
+  }
 
-    return {
+  private async getDumpMovements(fromDate: string, toDate: string): Promise<StockMovementRow[]> {
+    if (fromDate > toDate) {
+      return [];
+    }
+
+    const rows = await AppDataSource.query(
+      `
+      SELECT
+        dump."entryDate" AS "date",
+        COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text) AS "ingredientId",
+        COALESCE(NULLIF((impact->>'ingredientName'), ''), dump."sourceName") AS "ingredientName",
+        LOWER(COALESCE(NULLIF((impact->>'unit'), ''), dump."baseUnit", dump."unit")) AS "unit",
+        SUM(
+          COALESCE(
+            CASE WHEN impact ? 'quantity' THEN NULLIF(impact->>'quantity', '')::numeric ELSE NULL END,
+            dump."baseQuantity"
+          )
+        ) AS "quantity"
+      FROM "dump_entries" dump
+      LEFT JOIN LATERAL jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(dump."ingredientImpacts") = 'array' THEN dump."ingredientImpacts"
+          ELSE '[]'::jsonb
+        END
+      ) impact ON TRUE
+      WHERE dump."entryDate" >= $1
+        AND dump."entryDate" <= $2
+        AND (
+          dump."entryType" = 'ingredient'
+          OR (impact->>'ingredientId') IS NOT NULL
+        )
+      GROUP BY
+        dump."entryDate",
+        COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text),
+        COALESCE(NULLIF((impact->>'ingredientName'), ''), dump."sourceName"),
+        LOWER(COALESCE(NULLIF((impact->>'unit'), ''), dump."baseUnit", dump."unit"))
+      `,
+      [fromDate, toDate]
+    );
+
+    return (rows as Array<Record<string, unknown>>)
+      .map((row) => ({
+        date: String(row.date ?? ""),
+        ingredientId: String(row.ingredientId ?? ""),
+        ingredientName: String(row.ingredientName ?? "-"),
+        unit: String(row.unit ?? ""),
+        quantity: toQty(toNumber(row.quantity))
+      }))
+      .filter((row) => row.ingredientId.length > 0);
+  }
+
+  private async getTransferMovements(
+    fromDate: string,
+    toDate: string,
+    outletId: string | null
+  ): Promise<TransferMovementRow[]> {
+    if (!outletId || fromDate > toDate) {
+      return [];
+    }
+
+    const rows = await AppDataSource.query(
+      `
+      SELECT
+        transfer."transferDate" AS "date",
+        movement."ingredientId" AS "ingredientId",
+        movement."ingredientName" AS "ingredientName",
+        LOWER(movement."unit") AS "unit",
+        SUM(CASE WHEN transfer."toOutletId" = $3 THEN movement."quantity" ELSE 0 END) AS "transferredIn",
+        SUM(CASE WHEN transfer."fromOutletId" = $3 THEN movement."quantity" ELSE 0 END) AS "transferredOut"
+      FROM "outlet_transfers" transfer
+      JOIN LATERAL (
+        SELECT
+          NULLIF(line->>'sourceId', '') AS "ingredientId",
+          COALESCE(NULLIF(line->>'sourceName', ''), '-') AS "ingredientName",
+          COALESCE(NULLIF(line->>'unit', ''), 'unit') AS "unit",
+          COALESCE(NULLIF(line->>'quantity', ''), '0')::numeric AS "quantity"
+        FROM jsonb_array_elements(transfer."lines") line
+        WHERE line->>'lineType' = 'ingredient'
+
+        UNION ALL
+
+        SELECT
+          NULLIF(impact->>'ingredientId', '') AS "ingredientId",
+          COALESCE(NULLIF(impact->>'ingredientName', ''), '-') AS "ingredientName",
+          COALESCE(NULLIF(impact->>'unit', ''), 'unit') AS "unit",
+          COALESCE(NULLIF(impact->>'quantity', ''), '0')::numeric AS "quantity"
+        FROM jsonb_array_elements(transfer."lines") line
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(line->'impacts') = 'array' THEN line->'impacts'
+            ELSE '[]'::jsonb
+          END
+        ) impact
+        WHERE line->>'lineType' = 'item'
+      ) movement ON TRUE
+      WHERE transfer."transferDate" >= $1
+        AND transfer."transferDate" <= $2
+        AND (transfer."fromOutletId" = $3 OR transfer."toOutletId" = $3)
+        AND movement."ingredientId" IS NOT NULL
+      GROUP BY
+        transfer."transferDate",
+        movement."ingredientId",
+        movement."ingredientName",
+        LOWER(movement."unit")
+      `,
+      [fromDate, toDate, outletId]
+    );
+
+    return (rows as Array<Record<string, unknown>>).map((row) => ({
+      date: String(row.date ?? ""),
+      ingredientId: String(row.ingredientId ?? ""),
+      ingredientName: String(row.ingredientName ?? "-"),
+      unit: String(row.unit ?? ""),
+      transferredIn: toQty(toNumber(row.transferredIn)),
+      transferredOut: toQty(toNumber(row.transferredOut))
+    }));
+  }
+
+  private async buildStockConsumptionDataset(from: Date, to: Date, outletId?: string) {
+    const fromDate = formatDate(from);
+    const toDate = formatDate(to);
+    const todayDate = formatDate(endOfDay(new Date()));
+    const movementEndDate = fromDate > todayDate ? fromDate : todayDate;
+
+    const [outletContext, ingredients, stocks] = await Promise.all([
+      this.resolveOutletContext(outletId),
+      this.ingredientRepository.find({ order: { name: "ASC" } }),
+      this.ingredientStockRepository.find()
+    ]);
+
+    const [usageRows, dumpRows, transferRows] = await Promise.all([
+      this.getUsageMovements(fromDate, movementEndDate),
+      this.getDumpMovements(fromDate, movementEndDate),
+      this.getTransferMovements(fromDate, movementEndDate, outletContext?.id ?? null)
+    ]);
+
+    const ingredientNameMap = new Map<string, string>(ingredients.map((ingredient) => [ingredient.id, ingredient.name]));
+    const ingredientUnitMap = new Map<string, string>(ingredients.map((ingredient) => [ingredient.id, ingredient.unit]));
+    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, toQty(toNumber(stock.totalStock))]));
+
+    const consumedRangeMap = new Map<string, number>();
+    const dumpRangeMap = new Map<string, number>();
+    const transferInRangeMap = new Map<string, number>();
+    const transferOutRangeMap = new Map<string, number>();
+
+    const consumedFromStartMap = new Map<string, number>();
+    const dumpFromStartMap = new Map<string, number>();
+    const transferInFromStartMap = new Map<string, number>();
+    const transferOutFromStartMap = new Map<string, number>();
+
+    const ingredientIdsInRange = new Set<string>();
+
+    const addToMap = (map: Map<string, number>, key: string, value: number) => {
+      map.set(key, (map.get(key) ?? 0) + value);
+    };
+
+    usageRows.forEach((row) => {
+      ingredientNameMap.set(row.ingredientId, ingredientNameMap.get(row.ingredientId) ?? row.ingredientName);
+      ingredientUnitMap.set(row.ingredientId, ingredientUnitMap.get(row.ingredientId) ?? row.unit);
+      addToMap(consumedFromStartMap, row.ingredientId, row.quantity);
+      if (row.date <= toDate) {
+        const key = this.movementKey(row.ingredientId, row.date);
+        addToMap(consumedRangeMap, key, row.quantity);
+        ingredientIdsInRange.add(row.ingredientId);
+      }
+    });
+
+    dumpRows.forEach((row) => {
+      ingredientNameMap.set(row.ingredientId, ingredientNameMap.get(row.ingredientId) ?? row.ingredientName);
+      ingredientUnitMap.set(row.ingredientId, ingredientUnitMap.get(row.ingredientId) ?? row.unit);
+      addToMap(dumpFromStartMap, row.ingredientId, row.quantity);
+      if (row.date <= toDate) {
+        const key = this.movementKey(row.ingredientId, row.date);
+        addToMap(dumpRangeMap, key, row.quantity);
+        ingredientIdsInRange.add(row.ingredientId);
+      }
+    });
+
+    transferRows.forEach((row) => {
+      ingredientNameMap.set(row.ingredientId, ingredientNameMap.get(row.ingredientId) ?? row.ingredientName);
+      ingredientUnitMap.set(row.ingredientId, ingredientUnitMap.get(row.ingredientId) ?? row.unit);
+      addToMap(transferInFromStartMap, row.ingredientId, row.transferredIn);
+      addToMap(transferOutFromStartMap, row.ingredientId, row.transferredOut);
+      if (row.date <= toDate) {
+        const key = this.movementKey(row.ingredientId, row.date);
+        addToMap(transferInRangeMap, key, row.transferredIn);
+        addToMap(transferOutRangeMap, key, row.transferredOut);
+        ingredientIdsInRange.add(row.ingredientId);
+      }
+    });
+
+    const dateSeries = this.buildDateSeries(fromDate, toDate);
+    const ingredientIds = Array.from(ingredientIdsInRange).sort((left, right) => {
+      const leftName = ingredientNameMap.get(left) ?? left;
+      const rightName = ingredientNameMap.get(right) ?? right;
+      return leftName.localeCompare(rightName);
+    });
+
+    const rows: ReportRow[] = [];
+
+    ingredientIds.forEach((ingredientId) => {
+      const currentStock = stockMap.get(ingredientId) ?? 0;
+      const outgoingSinceStart =
+        (consumedFromStartMap.get(ingredientId) ?? 0) +
+        (dumpFromStartMap.get(ingredientId) ?? 0) +
+        (transferOutFromStartMap.get(ingredientId) ?? 0);
+      const incomingSinceStart = transferInFromStartMap.get(ingredientId) ?? 0;
+      let openingStock = toQty(currentStock + outgoingSinceStart - incomingSinceStart);
+      const ingredientName = ingredientNameMap.get(ingredientId) ?? "-";
+      const unit = ingredientUnitMap.get(ingredientId) ?? "-";
+
+      dateSeries.forEach((date) => {
+        const key = this.movementKey(ingredientId, date);
+        const consumption = toQty(consumedRangeMap.get(key) ?? 0);
+        const dump = toQty(dumpRangeMap.get(key) ?? 0);
+        const transferredIn = toQty(transferInRangeMap.get(key) ?? 0);
+        const transferredOut = toQty(transferOutRangeMap.get(key) ?? 0);
+        const totalStock = toQty(openingStock + transferredIn - transferredOut - consumption - dump);
+
+        rows.push({
+          date,
+          ingredient: ingredientName,
+          unit,
+          openingStock: toQty(openingStock),
+          dump,
+          consumption,
+          transferredIn,
+          transferredOut,
+          totalStock
+        });
+
+        openingStock = totalStock;
+      });
+    });
+
+    const finalDate = dateSeries[dateSeries.length - 1];
+    const totalConsumption = toQty(rows.reduce((sum, row) => sum + toNumber(row.consumption), 0));
+    const totalDump = toQty(rows.reduce((sum, row) => sum + toNumber(row.dump), 0));
+    const totalTransferredIn = toQty(rows.reduce((sum, row) => sum + toNumber(row.transferredIn), 0));
+    const totalTransferredOut = toQty(rows.reduce((sum, row) => sum + toNumber(row.transferredOut), 0));
+    const closingStock = finalDate
+      ? toQty(
+          rows
+            .filter((row) => row.date === finalDate)
+            .reduce((sum, row) => sum + toNumber(row.totalStock), 0)
+        )
+      : 0;
+
+    const payload: ReportPayload = {
       stats: [
-        { label: "Ingredients Used", value: parsedRows.length },
-        { label: "Overused Ingredients", value: parsedRows.filter((row) => row.status === "OVERUSED").length },
-        { label: "Total Overused Qty", value: toQty(parsedRows.reduce((sum, row) => sum + row.overused, 0)) }
+        { label: "Ingredients", value: ingredientIds.length },
+        { label: "Total Consumption", value: totalConsumption },
+        { label: "Total Dump", value: totalDump },
+        { label: "Transferred In", value: totalTransferredIn },
+        { label: "Transferred Out", value: totalTransferredOut },
+        {
+          label: "Closing Stock",
+          value: closingStock,
+          hint: finalDate ? `As of ${finalDate}` : undefined
+        }
       ],
       columns: [
+        { key: "date", label: "Date" },
         { key: "ingredient", label: "Ingredient" },
         { key: "unit", label: "Unit" },
-        { key: "allocated", label: "Allocated" },
-        { key: "consumed", label: "Consumed" },
-        { key: "overused", label: "Overused" },
-        { key: "remaining", label: "Remaining" },
-        { key: "status", label: "Status" }
+        { key: "openingStock", label: "Opening Stock" },
+        { key: "dump", label: "Dump" },
+        { key: "consumption", label: "Consumption" },
+        { key: "transferredIn", label: "Transferred In" },
+        { key: "transferredOut", label: "Transferred Out" },
+        { key: "totalStock", label: "Total Stock" }
       ],
-      rows: parsedRows
+      rows
     };
+
+    const outletLabel = outletContext
+      ? `${outletContext.outletCode} - ${outletContext.outletName}`
+      : "No active outlet";
+
+    return { payload, outletLabel };
+  }
+
+  private async generateStockConsumptionReport(from: Date, to: Date, outletId?: string): Promise<ReportPayload> {
+    const computed = await this.buildStockConsumptionDataset(from, to, outletId);
+    return computed.payload;
   }
 
   private async generateGamingReport(from: Date, to: Date): Promise<ReportPayload> {
@@ -1450,7 +1883,12 @@ export class ReportsService {
     };
   }
 
-  private async dispatchGenerateReport(reportKey: ReportKey, from: Date, to: Date): Promise<ReportPayload> {
+  private async dispatchGenerateReport(
+    reportKey: ReportKey,
+    from: Date,
+    to: Date,
+    options?: { outletId?: string }
+  ): Promise<ReportPayload> {
     switch (reportKey) {
       case "daily_sales_report":
         return this.generateDailySalesReport(from, to);
@@ -1497,7 +1935,7 @@ export class ReportsService {
       case "peak_sales_time_report":
         return this.generatePeakSalesTimeReport(from, to);
       case "stock_consumption_report":
-        return this.generateStockConsumptionReport(from, to);
+        return this.generateStockConsumptionReport(from, to, options?.outletId);
       case "gaming_report":
         return this.generateGamingReport(from, to);
       case "cash_audit_report":

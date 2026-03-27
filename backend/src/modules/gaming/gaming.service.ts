@@ -684,6 +684,7 @@ export class GamingService {
 
     bookings.forEach((booking) => {
       const dto = this.toDto(booking);
+      const collectibleAmount = roundCurrency(dto.finalAmount + dto.foodAndBeverageAmount);
       totals[dto.status] += 1;
       if (dto.status === "ongoing") {
         totals.activePlayers += dto.customerCount;
@@ -695,11 +696,11 @@ export class GamingService {
       }
       if (dto.paymentStatus === "pending") {
         totals.pendingPayments += 1;
-        totals.pendingCollection = roundCurrency(totals.pendingCollection + dto.finalAmount);
+        totals.pendingCollection = roundCurrency(totals.pendingCollection + collectibleAmount);
       }
       if (dto.paymentStatus === "paid") {
         totals.paidBookings += 1;
-        totals.totalRevenue = roundCurrency(totals.totalRevenue + dto.finalAmount);
+        totals.totalRevenue = roundCurrency(totals.totalRevenue + collectibleAmount);
       }
 
       const staffKey = dto.staffId;
@@ -710,7 +711,7 @@ export class GamingService {
         bookings: 0
       };
       if (dto.paymentStatus === "paid") {
-        staffRow.collectedAmount = roundCurrency(staffRow.collectedAmount + dto.finalAmount);
+        staffRow.collectedAmount = roundCurrency(staffRow.collectedAmount + collectibleAmount);
       }
       staffRow.bookings += 1;
       staffCollectionMap.set(staffKey, staffRow);
@@ -726,7 +727,7 @@ export class GamingService {
         };
         resourceRow.bookings += 1;
         if (dto.paymentStatus === "paid") {
-          resourceRow.revenue = roundCurrency(resourceRow.revenue + dto.finalAmount);
+          resourceRow.revenue = roundCurrency(resourceRow.revenue + collectibleAmount);
         }
         resourceUsageMap.set(resourceKey, resourceRow);
       });

@@ -93,6 +93,7 @@ const createDraftOrder = (orderType: OrderType = "takeaway"): PosOrder => {
     tableLabel: null,
     kitchenStatus: "not_sent",
     status: "draft",
+    paymentMode: null,
     customer: null,
     lines: [],
     appliedOffer: null,
@@ -270,13 +271,12 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         };
       }
 
-      const today = new Date().toISOString().slice(0, 10);
-      const todayAllocations = catalog.allocations.filter((allocation) => allocation.date === today);
-      if (!todayAllocations.length) {
+      const activeAllocations = catalog.allocations.filter((allocation) => allocation.remainingQuantity > 0);
+      if (!activeAllocations.length) {
         return {
           ok: false as const,
           message:
-            "Today ingredient allocation is missing. Please ask admin to allocate stock before billing."
+            "Allocated stock is not available. Please ask admin to allocate ingredient stock."
         };
       }
 
@@ -296,7 +296,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       }
 
       const allocationByIngredient = new Map(
-        todayAllocations.map((allocation) => [allocation.ingredientId, allocation])
+        activeAllocations.map((allocation) => [allocation.ingredientId, allocation])
       );
 
       const missingIngredients = new Set<string>();
@@ -309,7 +309,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         }
 
         const allocation = allocationByIngredient.get(ingredientId);
-        if (!allocation || allocation.allocatedQuantity <= 0) {
+        if (!allocation || allocation.remainingQuantity <= 0) {
           missingIngredients.add(usage.ingredientNameSnapshot);
           continue;
         }
@@ -325,15 +325,15 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         const chunks: string[] = [];
         if (missingIngredients.size) {
           chunks.push(
-            `No daily allocation for: ${[...missingIngredients].join(", ")}`
+            `No allocated stock for: ${[...missingIngredients].join(", ")}`
           );
         }
         if (insufficientIngredients.length) {
-          chunks.push(`Insufficient allocated stock: ${insufficientIngredients.join(", ")}`);
+          chunks.push(`Allocated stock exhausted: ${insufficientIngredients.join(", ")}`);
         }
         return {
           ok: false as const,
-          message: `${chunks.join(". ")}. Please contact admin and allocate stock.`
+          message: `${chunks.join(". ")}. Please contact admin to allocate more stock.`
         };
       }
 
@@ -686,7 +686,8 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
     }
     const pendingOrder = recomputeOrder({
       ...currentOrder,
-      status: "pending"
+      status: "pending",
+      paymentMode: null
     });
     await ordersRepository.save(pendingOrder);
     await ordersRepository.upsertPendingBill({
@@ -728,6 +729,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
       ...currentOrder,
       status: "pending",
       kitchenStatus: "queued",
+      paymentMode: null,
       syncStatus: "pending",
       updatedAt: now
     });
@@ -890,6 +892,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         ...currentOrder,
         status: "paid",
         kitchenStatus: "served",
+        paymentMode: input.mode,
         syncStatus: "pending",
         updatedAt: now
       });

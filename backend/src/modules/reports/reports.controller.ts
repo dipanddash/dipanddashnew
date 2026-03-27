@@ -40,6 +40,7 @@ export class ReportsController {
         dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
         dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
         search: typeof req.query.search === "string" ? req.query.search : undefined,
+        outletId: typeof req.query.outletId === "string" ? req.query.outletId : undefined,
         page: parsePositiveInt(req.query.page, 1),
         limit: parsePositiveInt(req.query.limit, 50)
       }
@@ -47,5 +48,46 @@ export class ReportsController {
 
     return sendSuccess(res, StatusCodes.OK, "Report generated successfully.", data);
   };
-}
 
+  exportStockConsumption = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) {
+      throw new AppError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.UNAUTHORIZED);
+    }
+
+    const format = req.query.format === "pdf" ? "pdf" : "excel";
+    const file = await this.reportsService.exportStockConsumptionReport(
+      { id: req.user.id, role: req.user.role },
+      {
+        dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
+        search: typeof req.query.search === "string" ? req.query.search : undefined,
+        outletId: typeof req.query.outletId === "string" ? req.query.outletId : undefined
+      },
+      format
+    );
+
+    res.setHeader("Content-Type", file.mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${file.fileName}"`);
+    return res.status(StatusCodes.OK).send(file.content);
+  };
+
+  previewStockConsumptionHtml = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) {
+      throw new AppError(StatusCodes.UNAUTHORIZED, AUTH_MESSAGES.UNAUTHORIZED);
+    }
+
+    const file = await this.reportsService.exportStockConsumptionHtml(
+      { id: req.user.id, role: req.user.role },
+      {
+        dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
+        dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
+        search: typeof req.query.search === "string" ? req.query.search : undefined,
+        outletId: typeof req.query.outletId === "string" ? req.query.outletId : undefined
+      }
+    );
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="${file.fileName}"`);
+    return res.status(StatusCodes.OK).send(file.html);
+  };
+}

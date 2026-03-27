@@ -5,7 +5,12 @@ import { asyncHandler } from "../../middlewares/async-handler";
 import { authenticate, authorizeRoles } from "../../middlewares/auth.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
 import { ReportsController } from "./reports.controller";
-import { generateReportSchema, reportsCatalogSchema } from "./reports.validation";
+import {
+  exportStockConsumptionSchema,
+  generateReportSchema,
+  reportsCatalogSchema,
+  stockConsumptionHtmlPreviewSchema
+} from "./reports.validation";
 
 const router = Router();
 const reportsController = new ReportsController();
@@ -23,6 +28,15 @@ router.use(
 
 router.get("/catalog", validateRequest(reportsCatalogSchema), asyncHandler(reportsController.getCatalog));
 router.get("/generate", validateRequest(generateReportSchema), asyncHandler(reportsController.generateReport));
+router.get(
+  "/stock-consumption/export",
+  validateRequest(exportStockConsumptionSchema),
+  asyncHandler(reportsController.exportStockConsumption)
+);
+router.get(
+  "/stock-consumption/html",
+  validateRequest(stockConsumptionHtmlPreviewSchema),
+  asyncHandler(reportsController.previewStockConsumptionHtml)
+);
 
 export const reportsRoutes = router;
-

@@ -37,8 +37,14 @@ const GamingPage = lazy(() =>
 const StockAuditPage = lazy(() =>
   import("@/pages/StockAuditPage").then((module) => ({ default: module.StockAuditPage }))
 );
+const DumpWastagePage = lazy(() =>
+  import("@/pages/DumpWastagePage").then((module) => ({ default: module.DumpWastagePage }))
+);
 const CashAuditPage = lazy(() =>
   import("@/pages/CashAuditPage").then((module) => ({ default: module.CashAuditPage }))
+);
+const OutletsPage = lazy(() =>
+  import("@/pages/OutletsPage").then((module) => ({ default: module.OutletsPage }))
 );
 const AdminOrdersPage = lazy(() =>
   import("@/pages/AdminOrdersPage").then((module) => ({ default: module.AdminOrdersPage }))
@@ -54,6 +60,9 @@ const SuppliersPage = lazy(() =>
 );
 const PurchasePage = lazy(() =>
   import("@/pages/PurchasePage").then((module) => ({ default: module.PurchasePage }))
+);
+const AssetsEntryPage = lazy(() =>
+  import("@/pages/AssetsEntryPage").then((module) => ({ default: module.AssetsEntryPage }))
 );
 const ReportsPage = lazy(() =>
   import("@/pages/ReportsPage").then((module) => ({ default: module.ReportsPage }))
@@ -71,9 +80,7 @@ const Suspended = ({ children }: { children: ReactNode }) => (
 );
 
 export const AppRouter = () => {
-  const placeholderPaths = [
-    "/assets-entry"
-  ];
+  const placeholderPaths: string[] = [];
 
   return (
     <Routes>
@@ -164,6 +171,14 @@ export const AppRouter = () => {
               }
             />
             <Route
+              path={APP_ROUTES.ASSETS_ENTRY}
+              element={
+                <Suspended>
+                  <AssetsEntryPage />
+                </Suspended>
+              }
+            />
+            <Route
               path="/sales-statics"
               element={
                 <Suspended>
@@ -204,10 +219,26 @@ export const AppRouter = () => {
               }
             />
             <Route
+              path={APP_ROUTES.DUMP_WASTAGE}
+              element={
+                <Suspended>
+                  <DumpWastagePage />
+                </Suspended>
+              }
+            />
+            <Route
               path={APP_ROUTES.CASH_AUDIT}
               element={
                 <Suspended>
                   <CashAuditPage />
+                </Suspended>
+              }
+            />
+            <Route
+              path={APP_ROUTES.OUTLETS}
+              element={
+                <Suspended>
+                  <OutletsPage />
                 </Suspended>
               }
             />

@@ -28,6 +28,21 @@ export class CashAudit {
   @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
   staffCashTakenAmount!: number;
 
+  @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
+  enteredCardAmount!: number;
+
+  @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
+  enteredUpiAmount!: number;
+
+  @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
+  expectedCashAmount!: number;
+
+  @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
+  expectedCardAmount!: number;
+
+  @Column({ type: "numeric", precision: 12, scale: 2, default: 0 })
+  expectedUpiAmount!: number;
+
   @Column({ type: "varchar", length: 500, nullable: true })
   note!: string | null;
 

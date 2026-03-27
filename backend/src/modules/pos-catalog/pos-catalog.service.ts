@@ -1,4 +1,4 @@
-import { MoreThanOrEqual } from "typeorm";
+import { MoreThan, MoreThanOrEqual } from "typeorm";
 
 import { AppDataSource } from "../../database/data-source";
 import { DailyAllocation } from "../ingredients/daily-allocation.entity";
@@ -14,8 +14,6 @@ import { Combo } from "../items/combo.entity";
 import { UNIT_META } from "../items/items.units";
 import { Coupon } from "../offers/coupon.entity";
 import { Product } from "../procurement/product.entity";
-
-const dateOnly = (value: Date) => value.toISOString().slice(0, 10);
 
 const latestIso = (values: Array<Date | null | undefined>) => {
   const valid = values.filter((value): value is Date => Boolean(value));
@@ -67,11 +65,9 @@ export class PosCatalogService {
     const now = new Date();
     const version = await this.getLatestVersion();
     const sinceDate = input?.sinceVersion ? new Date(input.sinceVersion) : null;
-    const allocationDate = input?.allocationDate ?? dateOnly(now);
-
     const whereUpdatedSince = sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
 
-    const [categories, items, itemIngredients, addOns, addOnIngredients, combos, comboItems, coupons, allocations, control, products] =
+    const [categories, items, itemIngredients, addOns, addOnIngredients, combos, comboItems, coupons, allocationRows, control, products] =
       await Promise.all([
         this.itemCategoryRepository.find({
           where: whereUpdatedSince ? { updatedAt: MoreThanOrEqual(whereUpdatedSince) } : {},
@@ -106,9 +102,9 @@ export class PosCatalogService {
           order: { updatedAt: "DESC" }
         }),
         this.dailyAllocationRepository.find({
-          where: { date: allocationDate },
+          where: { remainingQuantity: MoreThan(0) },
           relations: { ingredient: true },
-          order: { updatedAt: "DESC" }
+          order: { date: "DESC", updatedAt: "DESC" }
         }),
         this.posBillingControlRepository.findOne({
           where: {},
@@ -119,6 +115,59 @@ export class PosCatalogService {
           order: { name: "ASC" }
         })
       ]);
+
+    const allocationPoolMap = new Map<
+      string,
+      {
+        id: string;
+        ingredientId: string;
+        ingredientName: string;
+        ingredientUnit: string;
+        date: string;
+        allocatedQuantity: number;
+        usedQuantity: number;
+        remainingQuantity: number;
+        updatedAt: string;
+      }
+    >();
+
+    allocationRows.forEach((allocation) => {
+      if (!allocation.ingredient?.isActive) {
+        return;
+      }
+
+      const remainingQuantity = Number(allocation.remainingQuantity);
+      if (remainingQuantity <= 0) {
+        return;
+      }
+
+      const existing = allocationPoolMap.get(allocation.ingredientId);
+      if (!existing) {
+        allocationPoolMap.set(allocation.ingredientId, {
+          id: allocation.id,
+          ingredientId: allocation.ingredientId,
+          ingredientName: allocation.ingredient.name,
+          ingredientUnit: allocation.ingredient.unit,
+          date: allocation.date,
+          allocatedQuantity: remainingQuantity,
+          usedQuantity: 0,
+          remainingQuantity,
+          updatedAt: allocation.updatedAt.toISOString()
+        });
+        return;
+      }
+
+      const nextRemaining = Number((existing.remainingQuantity + remainingQuantity).toFixed(6));
+      allocationPoolMap.set(allocation.ingredientId, {
+        ...existing,
+        allocatedQuantity: nextRemaining,
+        remainingQuantity: nextRemaining
+      });
+    });
+
+    const allocations = [...allocationPoolMap.values()].sort((left, right) =>
+      left.ingredientName.localeCompare(right.ingredientName)
+    );
 
     return {
       version,
@@ -218,17 +267,7 @@ export class PosCatalogService {
         isActive: coupon.isActive,
         updatedAt: coupon.updatedAt
       })),
-      allocations: allocations.map((allocation) => ({
-        id: allocation.id,
-        ingredientId: allocation.ingredientId,
-        ingredientName: allocation.ingredient.name,
-        ingredientUnit: allocation.ingredient.unit,
-        date: allocation.date,
-        allocatedQuantity: Number(allocation.allocatedQuantity),
-        usedQuantity: Number(allocation.usedQuantity),
-        remainingQuantity: Number(allocation.remainingQuantity),
-        updatedAt: allocation.updatedAt
-      })),
+      allocations,
       controls: {
         isBillingEnabled: control?.isBillingEnabled ?? true,
         enforceDailyAllocation: control?.enforceDailyAllocation ?? true,

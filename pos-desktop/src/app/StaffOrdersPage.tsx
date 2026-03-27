@@ -44,6 +44,9 @@ const toOrderTypeLabel = (value: PosOrder["orderType"] | string | null | undefin
   return value.replace(/_/g, " ");
 };
 
+const toPaymentModeLabel = (value: PosOrder["paymentMode"] | null | undefined) =>
+  value ? value.toUpperCase() : "-";
+
 export const StaffOrdersPage = () => {
   const toast = useToast();
   const { session } = usePosAuth();
@@ -51,6 +54,7 @@ export const StaffOrdersPage = () => {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [paymentModeFilter, setPaymentModeFilter] = useState<Exclude<PosOrder["paymentMode"], null> | "all">("all");
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [previewOrder, setPreviewOrder] = useState<PosOrder | null>(null);
@@ -68,6 +72,10 @@ export const StaffOrdersPage = () => {
         return false;
       }
 
+      if (paymentModeFilter !== "all" && (bill.paymentMode ?? null) !== paymentModeFilter) {
+        return false;
+      }
+
       const billDate = new Date(bill.updatedAt);
       if (Number.isNaN(billDate.getTime())) {
         return !dateFrom && !dateTo;
@@ -78,7 +86,7 @@ export const StaffOrdersPage = () => {
       const toOk = !dateTo || billDay <= dateTo;
       return fromOk && toOk;
     });
-  }, [completedBills, dateFrom, dateTo, search]);
+  }, [completedBills, dateFrom, dateTo, paymentModeFilter, search]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredBills.length / rowsPerPage)), [filteredBills.length, rowsPerPage]);
 
@@ -157,6 +165,16 @@ export const StaffOrdersPage = () => {
     setPage(1);
   };
 
+  const handlePaymentModeFilterChange = (value: string) => {
+    if (value === "cash" || value === "card" || value === "upi" || value === "mixed") {
+      setPaymentModeFilter(value);
+      setPage(1);
+      return;
+    }
+    setPaymentModeFilter("all");
+    setPage(1);
+  };
+
   const displayPage = Math.min(page, totalPages);
 
   const columns = useMemo<PosTableColumn<(typeof pagedBills)[number]>[]>(
@@ -182,6 +200,11 @@ export const StaffOrdersPage = () => {
         key: "orderType",
         header: "Order Type",
         render: (bill) => <Text textTransform="capitalize">{toOrderTypeLabel(bill.orderType)}</Text>
+      },
+      {
+        key: "paymentMode",
+        header: "Payment Mode",
+        render: (bill) => <Text>{toPaymentModeLabel(bill.paymentMode)}</Text>
       },
       {
         key: "totalAmount",
@@ -247,6 +270,16 @@ export const StaffOrdersPage = () => {
             <Input type="date" value={dateTo} onChange={(event) => handleDateToChange(event.target.value)} bg="white" />
           </FormControl>
           <FormControl w="150px">
+            <FormLabel fontSize="sm">Payment Mode</FormLabel>
+            <Select value={paymentModeFilter} onChange={(event) => handlePaymentModeFilterChange(event.target.value)} bg="white">
+              <option value="all">All</option>
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="upi">UPI</option>
+              <option value="mixed">Mixed</option>
+            </Select>
+          </FormControl>
+          <FormControl w="150px">
             <FormLabel fontSize="sm">Rows per page</FormLabel>
             <Select value={String(rowsPerPage)} onChange={(event) => handleRowsPerPageChange(event.target.value)} bg="white">
               <option value="5">5</option>
@@ -266,7 +299,7 @@ export const StaffOrdersPage = () => {
         columns={columns}
         getRowId={(bill) => bill.localOrderId}
         emptyMessage="No completed invoices found for current filters."
-        maxColumns={6}
+        maxColumns={7}
       />
       <HStack justify="space-between" flexWrap="wrap" gap={3}>
         <Text fontSize="sm" color="#705B52">
@@ -373,6 +406,15 @@ export const StaffOrdersPage = () => {
                       </Text>{" "}
                       {session?.fullName ?? "-"}
                     </Text>
+                  </HStack>
+                  <HStack justify="space-between" mt={1} fontSize="sm">
+                    <Text>
+                      <Text as="span" fontWeight={700}>
+                        Payment Mode:
+                      </Text>{" "}
+                      {toPaymentModeLabel(previewOrder.paymentMode)}
+                    </Text>
+                    <Text />
                   </HStack>
                   {previewOrder.orderType === "dine_in" ? (
                     <HStack justify="space-between" mt={1} fontSize="sm">

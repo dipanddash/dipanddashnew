@@ -1,4 +1,4 @@
-import { EntityManager, QueryFailedError } from "typeorm";
+import { EntityManager, MoreThan, QueryFailedError } from "typeorm";
 
 import { UserRole } from "../../constants/roles";
 import { AppDataSource } from "../../database/data-source";
@@ -209,32 +209,63 @@ export class InvoicesService {
       return;
     }
 
-    const existing = await manager.findOne(DailyAllocation, {
+    const activeAllocations = await manager.find(DailyAllocation, {
+      where: {
+        ingredientId: usage.ingredientId,
+        remainingQuantity: MoreThan(0)
+      },
+      order: {
+        date: "ASC",
+        updatedAt: "ASC"
+      }
+    });
+
+    let remainingToApply = consumedQuantity;
+    for (const allocation of activeAllocations) {
+      if (remainingToApply <= 0) {
+        break;
+      }
+
+      const available = Number(allocation.remainingQuantity);
+      if (available <= 0) {
+        continue;
+      }
+
+      const usedNow = Math.min(available, remainingToApply);
+      allocation.usedQuantity = Number(allocation.usedQuantity) + usedNow;
+      allocation.remainingQuantity = Math.max(Number(allocation.remainingQuantity) - usedNow, 0);
+      await manager.save(DailyAllocation, allocation);
+      remainingToApply -= usedNow;
+    }
+
+    if (remainingToApply <= 0) {
+      return;
+    }
+
+    const sameDateAllocation = await manager.findOne(DailyAllocation, {
       where: {
         ingredientId: usage.ingredientId,
         date: usage.usageDate
       }
     });
 
-    if (!existing) {
+    if (!sameDateAllocation) {
       const created = manager.create(DailyAllocation, {
         ingredientId: usage.ingredientId,
         date: usage.usageDate,
         allocatedQuantity: 0,
-        usedQuantity: consumedQuantity,
+        usedQuantity: remainingToApply,
         remainingQuantity: 0
       });
       await manager.save(DailyAllocation, created);
       return;
     }
 
-    const allocated = Number(existing.allocatedQuantity);
-    const nextUsed = Number(existing.usedQuantity) + consumedQuantity;
-    const nextRemaining = Math.max(allocated - nextUsed, 0);
-
-    existing.usedQuantity = nextUsed;
-    existing.remainingQuantity = nextRemaining;
-    await manager.save(DailyAllocation, existing);
+    const allocated = Number(sameDateAllocation.allocatedQuantity);
+    const nextUsed = Number(sameDateAllocation.usedQuantity) + remainingToApply;
+    sameDateAllocation.usedQuantity = nextUsed;
+    sameDateAllocation.remainingQuantity = Math.max(allocated - nextUsed, 0);
+    await manager.save(DailyAllocation, sameDateAllocation);
   }
 
   async listInvoices(filters: InvoiceListFilters, contextUser: ContextUser) {

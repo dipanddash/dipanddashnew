@@ -8,6 +8,7 @@ import { CashAuditController } from "./cash-audit.controller";
 import {
   cashAuditAdminListSchema,
   cashAuditAdminStatsSchema,
+  cashAuditStaffExpectedSchema,
   cashAuditStaffLastSchema,
   createCashAuditEntrySchema
 } from "./cash-audit.validation";
@@ -22,6 +23,13 @@ router.get(
   authorizeRoles(UserRole.ADMIN, UserRole.STAFF, UserRole.SNOOKER_STAFF),
   validateRequest(cashAuditStaffLastSchema),
   asyncHandler(cashAuditController.getStaffLastAuditInfo)
+);
+
+router.get(
+  "/staff/expected",
+  authorizeRoles(UserRole.ADMIN, UserRole.STAFF, UserRole.SNOOKER_STAFF),
+  validateRequest(cashAuditStaffExpectedSchema),
+  asyncHandler(cashAuditController.getStaffExpectedBreakdown)
 );
 
 router.post(

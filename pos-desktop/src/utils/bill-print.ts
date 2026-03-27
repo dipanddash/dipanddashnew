@@ -21,6 +21,8 @@ export const formatRs = (value: number) =>
 
 export const getLineBaseTotal = (line: PosOrder["lines"][number]) => line.unitPrice * line.quantity;
 
+const formatPaymentMode = (mode: PosOrder["paymentMode"]) => (mode ? mode.toUpperCase() : "-");
+
 export const buildBillDocumentHtml = (order: PosOrder, cashierName?: string | null) => {
   const totalDiscount =
     order.totals.couponDiscountAmount + order.totals.manualDiscountAmount + order.totals.itemDiscountAmount;
@@ -92,6 +94,10 @@ export const buildBillDocumentHtml = (order: PosOrder, cashierName?: string | nu
             <div class="row small" style="margin-top:4px;">
               <div><b>Customer:</b> ${order.customer?.name ?? "Walk-in Customer"}</div>
               <div><b>Cashier:</b> ${cashierName ?? "-"}</div>
+            </div>
+            <div class="row small" style="margin-top:4px;">
+              <div><b>Payment Mode:</b> ${formatPaymentMode(order.paymentMode)}</div>
+              <div></div>
             </div>
             ${
               order.orderType === "dine_in"

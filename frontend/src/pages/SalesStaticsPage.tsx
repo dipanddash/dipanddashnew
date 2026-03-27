@@ -170,6 +170,11 @@ export const SalesStaticsPage = () => {
               }
             />
             <StatsCard
+              label="Excess Amount"
+              value={formatCurrency(data.cards.excessAmount)}
+              helper={`Billed ${formatCurrency(data.cards.billedSales)}`}
+            />
+            <StatsCard
               label="Total Orders"
               value={String(data.cards.totalOrders)}
               helper={`${data.cards.uniqueCustomers} unique customers`}
@@ -179,6 +184,13 @@ export const SalesStaticsPage = () => {
               label="Discount + Tax"
               value={formatCurrency(data.cards.totalDiscount + data.cards.totalTax)}
               helper={`Discount ${formatCurrency(data.cards.totalDiscount)} | Tax ${formatCurrency(data.cards.totalTax)}`}
+            />
+            <StatsCard label="Cash Revenue" value={formatCurrency(data.cards.cashSales)} />
+            <StatsCard label="Card Revenue" value={formatCurrency(data.cards.cardSales)} />
+            <StatsCard
+              label="UPI Revenue"
+              value={formatCurrency(data.cards.upiSales)}
+              helper={`Mixed ${formatCurrency(data.cards.mixedSales)}`}
             />
           </SimpleGrid>
 

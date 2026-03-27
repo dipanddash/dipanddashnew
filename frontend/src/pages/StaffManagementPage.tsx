@@ -278,6 +278,7 @@ export const StaffManagementPage = () => {
           <HStack>
             <ActionIconButton
               aria-label={`Edit ${row.fullName}`}
+              tooltip="Edit staff"
               icon={<Edit2 size={16} />}
               size="sm"
               variant="outline"
@@ -285,6 +286,7 @@ export const StaffManagementPage = () => {
             />
             <ActionIconButton
               aria-label={`Reset password for ${row.fullName}`}
+              tooltip="Change password"
               icon={<KeyRound size={16} />}
               size="sm"
               variant="outline"

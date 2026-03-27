@@ -3,7 +3,7 @@ import type { ApiSuccess } from "@/types/api";
 import type { CashAuditRecordsResponse, CashAuditStatsResponse } from "@/types/cash-audit";
 
 export const cashAuditService = {
-  getAdminStats: async (params?: { dateFrom?: string; dateTo?: string }) => {
+  getAdminStats: async (params?: { dateFrom?: string; dateTo?: string; section?: "dip_and_dash" | "gaming" }) => {
     const response = await apiClient.get<ApiSuccess<CashAuditStatsResponse>>("/cash-audit/admin/stats", { params });
     return response.data;
   },
@@ -11,6 +11,7 @@ export const cashAuditService = {
   getAdminRecords: async (params?: {
     dateFrom?: string;
     dateTo?: string;
+    section?: "dip_and_dash" | "gaming";
     search?: string;
     page?: number;
     limit?: number;

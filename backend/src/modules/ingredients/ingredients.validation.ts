@@ -119,6 +119,7 @@ export const adjustIngredientStockSchema = z.object({
 export const allocationListSchema = z.object({
   query: z.object({
     date: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
+    overall: z.coerce.boolean().optional(),
     search: z.string().trim().optional(),
     categoryId: z.string().uuid("Invalid category id").optional(),
     page: z.coerce.number().int().min(1).default(1),

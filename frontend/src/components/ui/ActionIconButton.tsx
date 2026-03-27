@@ -25,7 +25,17 @@ export const ActionIconButton = ({ tooltip, tooltipProps, ...props }: ActionIcon
   }
 
   return (
-    <Tooltip label={label} hasArrow openDelay={180} placement="top" {...tooltipProps}>
+    <Tooltip
+      label={label}
+      hasArrow
+      openDelay={180}
+      placement="top"
+      maxW="260px"
+      whiteSpace="normal"
+      pointerEvents="none"
+      portalProps={{ appendToParentPortal: false }}
+      {...tooltipProps}
+    >
       <Box as="span" display="inline-flex">
         <IconButton {...props} />
       </Box>

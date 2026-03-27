@@ -191,6 +191,7 @@ export type PosOrder = {
   tableLabel: string | null;
   kitchenStatus: KitchenStatus;
   status: PosOrderStatus;
+  paymentMode: PaymentMode | null;
   customer: CustomerRecord | null;
   lines: CartLine[];
   appliedOffer: AppliedOffer | null;
@@ -433,6 +434,7 @@ export type RecentBillSummary = {
   tableLabel: string | null;
   kitchenStatus: KitchenStatus;
   status: PosOrderStatus;
+  paymentMode: PaymentMode | null;
   totalAmount: number;
   lineCount: number;
   updatedAt: string;
@@ -496,7 +498,163 @@ export type CashAuditEntry = {
   auditDate: string;
   countedAmount: number;
   staffCashTakenAmount: number;
+  enteredCashAmount: number;
+  enteredCardAmount: number;
+  enteredUpiAmount: number;
+  enteredTotalAmount: number;
+  expectedCashAmount: number;
+  expectedCardAmount: number;
+  expectedUpiAmount: number;
+  expectedTotalAmount: number;
+  differenceCashAmount: number;
+  differenceCardAmount: number;
+  differenceUpiAmount: number;
+  differenceTotalAmount: number;
+  excessAmount: number;
   totalPieces: number;
   createdAt: string;
   approvedByAdminName: string;
+};
+
+export type CashAuditExpectedBreakdown = {
+  auditDate: string;
+  section?: "dip_and_dash" | "gaming";
+  expectedCashAmount: number;
+  expectedCardAmount: number;
+  expectedUpiAmount: number;
+  expectedTotalAmount: number;
+};
+
+export type DumpEntryType = "ingredient" | "item" | "product";
+
+export type DumpEntryOptions = {
+  ingredients: Array<{
+    id: string;
+    name: string;
+    unit: string;
+    baseUnit: string;
+    unitOptions: string[];
+    currentStock: number;
+    perUnitPrice: number;
+  }>;
+  items: Array<{
+    id: string;
+    name: string;
+    baseUnit: string;
+    unitOptions: string[];
+    estimatedIngredientCost: number;
+  }>;
+  products: Array<{
+    id: string;
+    name: string;
+    unit: string;
+    baseUnit: string;
+    unitOptions: string[];
+    currentStock: number;
+    purchaseUnitPrice: number;
+  }>;
+};
+
+export type DumpIngredientImpact = {
+  ingredientId: string;
+  ingredientName: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  lossAmount: number;
+};
+
+export type DumpEntryRecord = {
+  id: string;
+  entryDate: string;
+  entryType: DumpEntryType;
+  sourceName: string;
+  quantity: number;
+  unit: string;
+  baseQuantity: number;
+  baseUnit: string;
+  lossAmount: number;
+  ingredientImpacts: DumpIngredientImpact[];
+  note: string | null;
+  createdByUserId: string;
+  createdByUserName: string;
+  createdByUsername: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OutletTransferLineType = "ingredient" | "product" | "item";
+
+export type OutletTransferOutlet = {
+  id: string;
+  outletCode: string;
+  outletName: string;
+  location: string;
+};
+
+export type OutletTransferOptionRow = {
+  id: string;
+  name: string;
+  unit: string;
+  unitPrice: number;
+  availableStock: number;
+};
+
+export type OutletTransferOptions = {
+  outlets: OutletTransferOutlet[];
+  ingredients: OutletTransferOptionRow[];
+  products: OutletTransferOptionRow[];
+  items: OutletTransferOptionRow[];
+};
+
+export type OutletTransferLineImpact = {
+  ingredientId: string;
+  ingredientName: string;
+  quantity: number;
+  unit: string;
+};
+
+export type OutletTransferRecordLine = {
+  lineType: OutletTransferLineType;
+  sourceId: string;
+  sourceName: string;
+  quantity: number;
+  unit: string;
+  lineValue: number;
+  impacts: OutletTransferLineImpact[];
+};
+
+export type OutletTransferRecord = {
+  id: string;
+  transferNumber: string;
+  transferDate: string;
+  fromOutletId: string;
+  fromOutletName: string;
+  toOutletId: string;
+  toOutletName: string;
+  lineCount: number;
+  totalQuantity: number;
+  totalValue: number;
+  note: string | null;
+  lines: OutletTransferRecordLine[];
+  createdByUserId: string;
+  createdByUserName: string;
+  createdByUsername: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OutletTransferListResponse = {
+  records: OutletTransferRecord[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+  stats: {
+    totalTransfers: number;
+    totalLines: number;
+    totalValue: number;
+  };
 };

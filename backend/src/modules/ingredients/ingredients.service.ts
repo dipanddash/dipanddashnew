@@ -35,6 +35,7 @@ type AllocationListFilters = PaginationQuery & {
   date: string;
   search?: string;
   categoryId?: string;
+  overall?: boolean;
 };
 
 type AllocationStatsFilters = {
@@ -639,6 +640,7 @@ export class IngredientsService {
 
   async getAllocations(filters: AllocationListFilters) {
     const targetDate = filters.date || getTodayDateString();
+    const isOverall = Boolean(filters.overall);
     const page = Math.max(1, filters.page || 1);
     const limit = Math.min(50, Math.max(1, filters.limit || 10));
     const offset = (page - 1) * limit;
@@ -663,29 +665,84 @@ export class IngredientsService {
     const ingredients = await ingredientQuery.offset(offset).limit(limit).getMany();
 
     const ingredientIds = ingredients.map((ingredient) => ingredient.id);
-    const [stocks, allocations] = await Promise.all([
+    const [stocks, allocationRows, usageRows] = await Promise.all([
       ingredientIds.length
         ? this.stockRepository.find({
             where: { ingredientId: In(ingredientIds) }
           })
         : Promise.resolve([]),
       ingredientIds.length
-        ? this.allocationRepository.find({
-            where: { ingredientId: In(ingredientIds), date: targetDate }
-          })
+        ? isOverall
+          ? this.allocationRepository
+              .createQueryBuilder("allocation")
+              .select("allocation.ingredientId", "ingredientId")
+              .addSelect("SUM(allocation.allocatedQuantity)", "allocatedQuantity")
+              .addSelect("SUM(allocation.usedQuantity)", "usedQuantity")
+              .addSelect("SUM(allocation.remainingQuantity)", "remainingQuantity")
+              .where("allocation.ingredientId IN (:...ingredientIds)", { ingredientIds })
+              .groupBy("allocation.ingredientId")
+              .getRawMany<{
+                ingredientId: string;
+                allocatedQuantity: string;
+                usedQuantity: string;
+                remainingQuantity: string;
+              }>()
+          : this.allocationRepository.find({
+              where: { ingredientId: In(ingredientIds), date: targetDate }
+            })
+        : Promise.resolve([]),
+      ingredientIds.length
+        ? this.usageEventRepository
+            .createQueryBuilder("event")
+            .select("event.ingredientId", "ingredientId")
+            .addSelect("SUM(event.consumedQuantity)", "usedQuantity")
+            .where("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
+            .andWhere(isOverall ? "1 = 1" : "event.usageDate = :date", isOverall ? {} : { date: targetDate })
+            .groupBy("event.ingredientId")
+            .getRawMany<{ ingredientId: string; usedQuantity: string }>()
         : Promise.resolve([])
     ]);
 
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, getNumericValue(stock.totalStock)]));
-    const allocationMap = new Map(allocations.map((allocation) => [allocation.ingredientId, allocation]));
+    const allocationMap = isOverall
+      ? new Map(
+          (allocationRows as Array<{
+            ingredientId: string;
+            allocatedQuantity: string;
+            usedQuantity: string;
+            remainingQuantity: string;
+          }>).map((allocation) => [
+            allocation.ingredientId,
+            {
+              id: null,
+              allocatedQuantity: getNumericValue(allocation.allocatedQuantity),
+              usedQuantity: getNumericValue(allocation.usedQuantity),
+              remainingQuantity: getNumericValue(allocation.remainingQuantity)
+            }
+          ])
+        )
+      : new Map(
+          (allocationRows as DailyAllocation[]).map((allocation) => [
+            allocation.ingredientId,
+            {
+              id: allocation.id,
+              allocatedQuantity: getNumericValue(allocation.allocatedQuantity),
+              usedQuantity: getNumericValue(allocation.usedQuantity),
+              remainingQuantity: getNumericValue(allocation.remainingQuantity)
+            }
+          ])
+        );
+    const usageMap = new Map(usageRows.map((row) => [row.ingredientId, getNumericValue(row.usedQuantity)]));
 
     return {
       rows: ingredients.map((ingredient) => {
         const stockValue = toFixedQuantity(stockMap.get(ingredient.id) ?? 0);
         const allocation = allocationMap.get(ingredient.id);
         const allocatedQuantity = toFixedQuantity(getNumericValue(allocation?.allocatedQuantity));
-        const usedQuantity = toFixedQuantity(getNumericValue(allocation?.usedQuantity));
-        const remainingQuantity = toFixedQuantity(getNumericValue(allocation?.remainingQuantity));
+        const allocationUsed = toFixedQuantity(getNumericValue(allocation?.usedQuantity));
+        const usageUsed = toFixedQuantity(usageMap.get(ingredient.id) ?? 0);
+        const usedQuantity = toFixedQuantity(Math.max(allocationUsed, usageUsed));
+        const remainingQuantity = toFixedQuantity(Math.max(allocatedQuantity - usedQuantity, 0));
         const minStock = toFixedQuantity(getNumericValue(ingredient.minStock));
 
         return {
@@ -701,7 +758,7 @@ export class IngredientsService {
           remainingQuantity,
           allocationId: allocation?.id ?? null,
           status: getStockStatus(stockValue, minStock),
-          date: targetDate
+          date: isOverall ? "overall" : targetDate
         };
       }),
       pagination: getPaginationMeta(page, limit, total)
@@ -729,18 +786,27 @@ export class IngredientsService {
     const ingredients = await ingredientQuery.getMany();
 
     const ingredientIds = ingredients.map((ingredient) => ingredient.id);
-    const [stocks, allocations, usageRows, staffUsageRows] = await Promise.all([
+    const [stocks, allocationTotalsRows, usageRows, staffUsageRows, recentAllocations] = await Promise.all([
       ingredientIds.length
         ? this.stockRepository.find({
             where: { ingredientId: In(ingredientIds) }
           })
         : Promise.resolve([]),
       ingredientIds.length
-        ? this.allocationRepository.find({
-            where: { ingredientId: In(ingredientIds), date: targetDate },
-            relations: { ingredient: { category: true } },
-            order: { updatedAt: "DESC" }
-          })
+        ? this.allocationRepository
+            .createQueryBuilder("allocation")
+            .select("allocation.ingredientId", "ingredientId")
+            .addSelect("SUM(allocation.allocatedQuantity)", "allocatedQuantity")
+            .addSelect("SUM(allocation.usedQuantity)", "usedQuantity")
+            .addSelect("SUM(allocation.remainingQuantity)", "remainingQuantity")
+            .where("allocation.ingredientId IN (:...ingredientIds)", { ingredientIds })
+            .groupBy("allocation.ingredientId")
+            .getRawMany<{
+              ingredientId: string;
+              allocatedQuantity: string;
+              usedQuantity: string;
+              remainingQuantity: string;
+            }>()
         : Promise.resolve([]),
       ingredientIds.length
         ? this.usageEventRepository
@@ -748,8 +814,7 @@ export class IngredientsService {
             .select("event.ingredientId", "ingredientId")
             .addSelect("SUM(event.consumedQuantity)", "usedQuantity")
             .addSelect("SUM(event.overusedQuantity)", "overusedQuantity")
-            .where("event.usageDate = :date", { date: targetDate })
-            .andWhere("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
+            .where("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
             .groupBy("event.ingredientId")
             .getRawMany<{ ingredientId: string; usedQuantity: string; overusedQuantity: string }>()
         : Promise.resolve([]),
@@ -761,8 +826,7 @@ export class IngredientsService {
             .addSelect("COALESCE(staff.fullName, 'Unknown Staff')", "staffName")
             .addSelect("COUNT(DISTINCT event.ingredientId)", "ingredientCount")
             .addSelect("SUM(event.consumedQuantity)", "consumedQuantity")
-            .where("event.usageDate = :date", { date: targetDate })
-            .andWhere("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
+            .where("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
             .groupBy("event.staffId")
             .addGroupBy("staff.fullName")
             .orderBy("SUM(event.consumedQuantity)", "DESC")
@@ -772,11 +836,28 @@ export class IngredientsService {
               ingredientCount: string;
               consumedQuantity: string;
             }>()
+        : Promise.resolve([]),
+      ingredientIds.length
+        ? this.allocationRepository.find({
+            where: { ingredientId: In(ingredientIds) },
+            relations: { ingredient: { category: true } },
+            order: { updatedAt: "DESC" },
+            take: 6
+          })
         : Promise.resolve([])
     ]);
 
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, getNumericValue(stock.totalStock)]));
-    const allocationMap = new Map(allocations.map((allocation) => [allocation.ingredientId, allocation]));
+    const allocationTotalsMap = new Map(
+      allocationTotalsRows.map((row) => [
+        row.ingredientId,
+        {
+          allocatedQuantity: getNumericValue(row.allocatedQuantity),
+          usedQuantity: getNumericValue(row.usedQuantity),
+          remainingQuantity: getNumericValue(row.remainingQuantity)
+        }
+      ])
+    );
     const usageMap = new Map(
       usageRows.map((row) => [
         row.ingredientId,
@@ -821,11 +902,11 @@ export class IngredientsService {
     for (const ingredient of ingredients) {
       const stockValue = toFixedQuantity(stockMap.get(ingredient.id) ?? 0);
       const minStock = toFixedQuantity(getNumericValue(ingredient.minStock));
-      const allocation = allocationMap.get(ingredient.id);
-      const allocationUsed = getNumericValue(allocation?.usedQuantity);
+      const allocationTotals = allocationTotalsMap.get(ingredient.id);
+      const allocationUsed = allocationTotals?.usedQuantity ?? 0;
       const usageUsed = usageMap.get(ingredient.id)?.usedQuantity ?? 0;
       const usedQuantity = toFixedQuantity(Math.max(allocationUsed, usageUsed));
-      const allocatedQuantity = toFixedQuantity(getNumericValue(allocation?.allocatedQuantity));
+      const allocatedQuantity = toFixedQuantity(allocationTotals?.allocatedQuantity ?? 0);
       const remainingQuantity = toFixedQuantity(Math.max(allocatedQuantity - usedQuantity, 0));
       const overusedQuantity = toFixedQuantity(usageMap.get(ingredient.id)?.overusedQuantity ?? 0);
       const valuation = toFixedQuantity(stockValue * getNumericValue(ingredient.perUnitPrice));
@@ -882,7 +963,7 @@ export class IngredientsService {
       categoryMetrics.set(ingredient.categoryId, categoryEntry);
     }
 
-    const recentUpdates = allocations.slice(0, 6).map((allocation) => ({
+    const recentUpdates = recentAllocations.map((allocation) => ({
       allocationId: allocation.id,
       ingredientId: allocation.ingredientId,
       ingredientName: allocation.ingredient.name,
@@ -899,7 +980,9 @@ export class IngredientsService {
         ingredientId: ingredient.id,
         ingredientName: ingredient.name,
         unit: ingredient.unit,
-        usedQuantity: toFixedQuantity(Math.max(getNumericValue(allocationMap.get(ingredient.id)?.usedQuantity), usageMap.get(ingredient.id)?.usedQuantity ?? 0))
+        usedQuantity: toFixedQuantity(
+          Math.max(allocationTotalsMap.get(ingredient.id)?.usedQuantity ?? 0, usageMap.get(ingredient.id)?.usedQuantity ?? 0)
+        )
       }))
       .filter((entry) => entry.usedQuantity > 0)
       .sort((a, b) => b.usedQuantity - a.usedQuantity)
@@ -1704,15 +1787,20 @@ export class IngredientsService {
     if (existing) {
       const previousAllocated = getNumericValue(existing.allocatedQuantity);
       const usedQuantity = getNumericValue(existing.usedQuantity);
+      const maxAllowed = toFixedQuantity(previousAllocated + currentStock);
 
       if (requestedAllocation < usedQuantity) {
         throw new AppError(422, "Allocated quantity cannot be less than used quantity");
       }
 
-      const delta = toFixedQuantity(requestedAllocation - previousAllocated);
-      if (delta > currentStock) {
-        throw new AppError(409, "Insufficient stock available");
+      if (requestedAllocation > maxAllowed) {
+        throw new AppError(
+          409,
+          `Insufficient stock available. Maximum allocatable is ${maxAllowed} ${ingredient.unit} (current stock ${toFixedQuantity(currentStock)} ${ingredient.unit}).`
+        );
       }
+
+      const delta = toFixedQuantity(requestedAllocation - previousAllocated);
 
       stock.totalStock = toFixedQuantity(currentStock - delta);
       stock.lastUpdatedAt = new Date();
@@ -1740,8 +1828,12 @@ export class IngredientsService {
       };
     }
 
-    if (requestedAllocation > currentStock) {
-      throw new AppError(409, "Insufficient stock available");
+    const maxAllowed = toFixedQuantity(currentStock);
+    if (requestedAllocation > maxAllowed) {
+      throw new AppError(
+        409,
+        `Insufficient stock available. Maximum allocatable is ${maxAllowed} ${ingredient.unit}.`
+      );
     }
 
     stock.totalStock = toFixedQuantity(currentStock - requestedAllocation);

@@ -297,9 +297,8 @@ export const StaffClosingPage = () => {
             columns={{ base: 1, md: 2, xl: 3 }}
             spacing={3}
             w={{ base: "full", xl: "auto" }}
-            minW={{ xl: "560px" }}
           >
-            <FormControl minW={{ base: "full", xl: "220px" }}>
+            <FormControl w={{ base: "full", xl: "220px" }}>
               <FormLabel fontSize="sm">Search Ingredient</FormLabel>
               <Input
                 size="sm"
@@ -308,7 +307,7 @@ export const StaffClosingPage = () => {
                 onChange={(event) => setDraftSearch(event.target.value)}
               />
             </FormControl>
-            <FormControl minW={{ base: "full", xl: "150px" }}>
+            <FormControl w={{ base: "full", xl: "150px" }}>
               <FormLabel fontSize="sm">Rows per page</FormLabel>
               <Select
                 size="sm"
@@ -426,7 +425,7 @@ export const StaffClosingPage = () => {
         <Box p={4} bg="white" borderRadius="14px" border="1px solid rgba(132, 79, 52, 0.2)">
         <HStack justify="space-between" mb={3} flexWrap="wrap" gap={3}>
           <Text fontWeight={900}>Closing History</Text>
-          <FormControl maxW="160px">
+          <FormControl w={{ base: "full", sm: "160px" }}>
             <FormLabel fontSize="sm">Rows per page</FormLabel>
             <Select
               size="sm"

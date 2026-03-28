@@ -504,20 +504,28 @@ export const StaffGamingBookingPage = () => {
 
   return (
     <VStack align="stretch" spacing={4}>
-      <SimpleGrid columns={{ base: 2, xl: 6 }} spacing={3}>
+      <SimpleGrid columns={{ base: 1, sm: 2, xl: 6 }} spacing={3}>
         <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white"><Text fontSize="sm">Playing</Text><Text fontSize="2xl" fontWeight={900}>{summary.ongoing}</Text></Box>
         <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white"><Text fontSize="sm">Upcoming</Text><Text fontSize="2xl" fontWeight={900}>{summary.upcoming}</Text></Box>
         <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white"><Text fontSize="sm">Completed</Text><Text fontSize="2xl" fontWeight={900}>{summary.completed}</Text></Box>
         <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white"><Text fontSize="sm">Pending Payment</Text><Text fontSize="2xl" fontWeight={900}>{summary.pending}</Text></Box>
         <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white"><Text fontSize="sm">Active Players</Text><Text fontSize="2xl" fontWeight={900}>{summary.players}</Text></Box>
-        <Box display="flex" alignItems="end" justifyContent="end"><Button leftIcon={<FiPlus size={16} />} onClick={openCreate}>New Booking</Button></Box>
+        <Box display="flex" alignItems={{ base: "stretch", xl: "end" }} justifyContent={{ base: "stretch", xl: "end" }}>
+          <Button leftIcon={<FiPlus size={16} />} onClick={openCreate} w={{ base: "full", xl: "auto" }}>
+            New Booking
+          </Button>
+        </Box>
       </SimpleGrid>
 
       <Box p={4} border="1px solid rgba(132,79,52,0.2)" borderRadius="14px" bg="white">
         <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3} mb={3}>
           <FormControl><FormLabel>Status</FormLabel><Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as GamingBookingStatus | "all")}><option value="all">All</option><option value="ongoing">Ongoing</option><option value="upcoming">Upcoming</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></Select></FormControl>
           <FormControl><FormLabel>Search</FormLabel><Input placeholder="Booking/customer/phone" value={search} onChange={(e) => setSearch(e.target.value)} /></FormControl>
-          <Box display="flex" alignItems="end"><Button variant="outline" onClick={() => void refreshAllViews()}>Refresh</Button></Box>
+          <Box display="flex" alignItems={{ base: "stretch", md: "end" }}>
+            <Button variant="outline" onClick={() => void refreshAllViews()} w={{ base: "full", md: "auto" }}>
+              Refresh
+            </Button>
+          </Box>
         </SimpleGrid>
 
         <PosDataTable
@@ -630,7 +638,12 @@ export const StaffGamingBookingPage = () => {
                   <FormControl><FormLabel>Action</FormLabel><Button variant="outline" size="sm" onClick={() => removeFoodLine(line.id)} isDisabled={foodLines.length <= 1}>Remove</Button></FormControl>
                 </SimpleGrid>
               ))}
-              <HStack justify="space-between"><Button leftIcon={<FiPlus size={14} />} variant="outline" onClick={() => setFoodLines((prev) => [...prev, createFoodLine()])}>Add Line</Button><Text fontWeight={800}>Draft Total: {formatINR(foodDraftTotal)}</Text></HStack>
+              <HStack justify="space-between" flexWrap="wrap" gap={2}>
+                <Button leftIcon={<FiPlus size={14} />} variant="outline" onClick={() => setFoodLines((prev) => [...prev, createFoodLine()])}>
+                  Add Line
+                </Button>
+                <Text fontWeight={800}>Draft Total: {formatINR(foodDraftTotal)}</Text>
+              </HStack>
               <Text fontSize="sm" color="#705A50">
                 This will create a pending <b>snooker</b> order in the Dip & Dash staff queue.
               </Text>

@@ -251,8 +251,8 @@ export const StaffOrdersPage = () => {
             Staff completed bills with quick preview and print.
           </Text>
         </VStack>
-        <HStack align="end" flexWrap="wrap" gap={3}>
-          <FormControl w="300px">
+        <HStack align="end" flexWrap="wrap" gap={3} w={{ base: "full", "2xl": "auto" }}>
+          <FormControl w={{ base: "full", md: "300px" }}>
             <FormLabel fontSize="sm">Search</FormLabel>
             <Input
               placeholder="Search invoice/customer/phone"
@@ -261,15 +261,15 @@ export const StaffOrdersPage = () => {
               bg="white"
             />
           </FormControl>
-          <FormControl w="170px">
+          <FormControl w={{ base: "full", sm: "170px" }}>
             <FormLabel fontSize="sm">From Date</FormLabel>
             <Input type="date" value={dateFrom} onChange={(event) => handleDateFromChange(event.target.value)} bg="white" />
           </FormControl>
-          <FormControl w="170px">
+          <FormControl w={{ base: "full", sm: "170px" }}>
             <FormLabel fontSize="sm">To Date</FormLabel>
             <Input type="date" value={dateTo} onChange={(event) => handleDateToChange(event.target.value)} bg="white" />
           </FormControl>
-          <FormControl w="150px">
+          <FormControl w={{ base: "full", sm: "150px" }}>
             <FormLabel fontSize="sm">Payment Mode</FormLabel>
             <Select value={paymentModeFilter} onChange={(event) => handlePaymentModeFilterChange(event.target.value)} bg="white">
               <option value="all">All</option>
@@ -279,7 +279,7 @@ export const StaffOrdersPage = () => {
               <option value="mixed">Mixed</option>
             </Select>
           </FormControl>
-          <FormControl w="150px">
+          <FormControl w={{ base: "full", sm: "150px" }}>
             <FormLabel fontSize="sm">Rows per page</FormLabel>
             <Select value={String(rowsPerPage)} onChange={(event) => handleRowsPerPageChange(event.target.value)} bg="white">
               <option value="5">5</option>

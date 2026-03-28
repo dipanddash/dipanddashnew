@@ -93,8 +93,8 @@ export const PosDataTable = <T,>({
 
   return (
     <>
-      <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflow="hidden">
-        <Table variant="simple" size="sm">
+      <Box border="1px solid rgba(132, 79, 52, 0.16)" borderRadius="12px" overflowX="auto" overflowY="hidden">
+        <Table variant="simple" size="sm" minW="680px">
           <Thead bg="rgba(218, 164, 56, 0.1)">
             <Tr>
               {visibleColumns.map((column) => (

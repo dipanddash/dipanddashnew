@@ -8,6 +8,7 @@ import {
   Tooltip,
   VStack,
   useDisclosure,
+  useMediaQuery,
   useToast
 } from "@chakra-ui/react";
 import { useEffect, useMemo, useState } from "react";
@@ -200,6 +201,7 @@ export const StaffDesktopShell = () => {
   const syncState = useSyncEngine();
   const isOnline = useNetworkStatus();
   const shortcutsModal = useDisclosure();
+  const [isCompactViewport] = useMediaQuery("(max-width: 1360px)");
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isNewOrderExpanded, setIsNewOrderExpanded] = useState(true);
@@ -207,6 +209,13 @@ export const StaffDesktopShell = () => {
     session?.role === "snooker_staff" ? "dashboard" : "new-order/take-away"
   );
   const isSnookerStaff = session?.role === "snooker_staff";
+  const isSidebarCollapsedResolved = isSidebarCollapsed || isCompactViewport;
+
+  useEffect(() => {
+    if (isCompactViewport) {
+      setIsSidebarCollapsed(true);
+    }
+  }, [isCompactViewport]);
 
   useEffect(() => {
     if (isSnookerStaff) {
@@ -292,37 +301,39 @@ export const StaffDesktopShell = () => {
 
   return (
     <Box h="100vh" overflow="hidden" bg="linear-gradient(160deg, #FFF6E6 0%, #FFFDF9 48%, #FFFFFF 100%)">
-      <HStack align="stretch" spacing={0} h="100%">
+      <HStack align="stretch" spacing={0} h="100%" w="100%" minW={0}>
         <Box
-          w={isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
-          minW={isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
+          w={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
+          minW={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
           h="100%"
           transition="width 0.22s ease"
           bg="linear-gradient(180deg, #FFFDF7 0%, #FFF8ED 100%)"
           borderRight="1px solid rgba(145, 87, 61, 0.15)"
-          p={isSidebarCollapsed ? 3 : 5}
-          pr={isSidebarCollapsed ? 2.5 : 4}
+          p={isSidebarCollapsedResolved ? 3 : 5}
+          pr={isSidebarCollapsedResolved ? 2.5 : 4}
           overflowY="auto"
           overflowX="hidden"
           boxShadow="4px 0 26px rgba(56, 21, 8, 0.05)"
         >
           <VStack align="stretch" spacing={2} flex={1}>
-            {isSidebarCollapsed ? (
+            {isSidebarCollapsedResolved ? (
               <>
                 <Image src={logo} alt="Dip & Dash" h="42px" objectFit="contain" mx="auto" />
-                <HStack justify="center" mt={1} mb={1}>
-                  <ActionIconButton
-                    aria-label="Expand sidebar"
-                    icon={<FiChevronRight size={18} />}
-                    onClick={() => setIsSidebarCollapsed(false)}
-                    size="sm"
-                    variant="outline"
-                    borderColor="rgba(142, 9, 9, 0.22)"
-                    color="#7A2620"
-                    bg="rgba(255,255,255,0.9)"
-                    _hover={{ bg: "rgba(193, 14, 14, 0.08)" }}
-                  />
-                </HStack>
+                {!isCompactViewport ? (
+                  <HStack justify="center" mt={1} mb={1}>
+                    <ActionIconButton
+                      aria-label="Expand sidebar"
+                      icon={<FiChevronRight size={18} />}
+                      onClick={() => setIsSidebarCollapsed(false)}
+                      size="sm"
+                      variant="outline"
+                      borderColor="rgba(142, 9, 9, 0.22)"
+                      color="#7A2620"
+                      bg="rgba(255,255,255,0.9)"
+                      _hover={{ bg: "rgba(193, 14, 14, 0.08)" }}
+                    />
+                  </HStack>
+                ) : null}
               </>
             ) : (
               <HStack justify="space-between" align="center" mb={2}>
@@ -360,10 +371,10 @@ export const StaffDesktopShell = () => {
                 const groupButton = (
                   <Button
                     variant="ghost"
-                    justifyContent={isSidebarCollapsed ? "center" : "space-between"}
+                    justifyContent={isSidebarCollapsedResolved ? "center" : "space-between"}
                     borderRadius="14px"
                     py={5.5}
-                    px={isSidebarCollapsed ? 2 : 3}
+                    px={isSidebarCollapsedResolved ? 2 : 3}
                     minH="48px"
                     fontWeight={800}
                     color={isGroupActive || isGroupExpanded ? "#7A2620" : "#5C3E33"}
@@ -381,7 +392,7 @@ export const StaffDesktopShell = () => {
                     }}
                     onClick={() => setIsNewOrderExpanded((previous) => !previous)}
                   >
-                    <Flex align="center" gap={isSidebarCollapsed ? 0 : 3}>
+                    <Flex align="center" gap={isSidebarCollapsedResolved ? 0 : 3}>
                       <Box
                         minW="30px"
                         h="30px"
@@ -393,9 +404,9 @@ export const StaffDesktopShell = () => {
                       >
                         <GroupIcon size={18} />
                       </Box>
-                      {!isSidebarCollapsed ? <Text color={isGroupActive ? "white" : undefined}>{menu.label}</Text> : null}
+                      {!isSidebarCollapsedResolved ? <Text color={isGroupActive ? "white" : undefined}>{menu.label}</Text> : null}
                     </Flex>
-                    {!isSidebarCollapsed ? (
+                    {!isSidebarCollapsedResolved ? (
                       <Box color={isGroupActive ? "white" : "#7A2620"}>
                         {isNewOrderExpanded ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
                       </Box>
@@ -405,14 +416,14 @@ export const StaffDesktopShell = () => {
 
                 return (
                   <VStack key={menu.group} align="stretch" spacing={2}>
-                    {isSidebarCollapsed ? (
+                    {isSidebarCollapsedResolved ? (
                       <Tooltip label={menu.label} placement="right" hasArrow openDelay={180}>
                         {groupButton}
                       </Tooltip>
                     ) : (
                       groupButton
                     )}
-                    {!isSidebarCollapsed && isNewOrderExpanded ? (
+                    {!isSidebarCollapsedResolved && isNewOrderExpanded ? (
                       <VStack align="stretch" pl={2} spacing={1.5}>
                         {NEW_ORDER_CHILDREN.map((child) => {
                           const ChildIcon = child.icon;
@@ -472,10 +483,10 @@ export const StaffDesktopShell = () => {
                 <Button
                   key={menu.key}
                   variant="ghost"
-                  justifyContent={isSidebarCollapsed ? "center" : "flex-start"}
+                  justifyContent={isSidebarCollapsedResolved ? "center" : "flex-start"}
                   borderRadius="14px"
                   py={5.5}
-                  px={isSidebarCollapsed ? 2 : 3}
+                  px={isSidebarCollapsedResolved ? 2 : 3}
                   minH="48px"
                   fontWeight={800}
                   color={isActive ? "white" : "#452E27"}
@@ -487,7 +498,7 @@ export const StaffDesktopShell = () => {
                   }}
                   onClick={() => setActiveView(menu.key)}
                 >
-                  <Flex align="center" gap={isSidebarCollapsed ? 0 : 3}>
+                  <Flex align="center" gap={isSidebarCollapsedResolved ? 0 : 3}>
                     <Box
                       minW="30px"
                       h="30px"
@@ -499,12 +510,12 @@ export const StaffDesktopShell = () => {
                     >
                       <Icon size={18} />
                     </Box>
-                    {!isSidebarCollapsed ? <Text>{menu.label}</Text> : null}
+                    {!isSidebarCollapsedResolved ? <Text>{menu.label}</Text> : null}
                   </Flex>
                 </Button>
               );
               return (
-                isSidebarCollapsed ? (
+                isSidebarCollapsedResolved ? (
                   <Tooltip key={menu.key} label={menu.label} placement="right" hasArrow openDelay={180}>
                     {menuButton}
                   </Tooltip>
@@ -516,10 +527,10 @@ export const StaffDesktopShell = () => {
 
             <Button
               variant="ghost"
-              justifyContent={isSidebarCollapsed ? "center" : "flex-start"}
+              justifyContent={isSidebarCollapsedResolved ? "center" : "flex-start"}
               borderRadius="14px"
               py={5.5}
-              px={isSidebarCollapsed ? 2 : 3}
+              px={isSidebarCollapsedResolved ? 2 : 3}
               minH="48px"
               fontWeight={800}
               color="#7A2620"
@@ -528,7 +539,7 @@ export const StaffDesktopShell = () => {
                 void logout();
               }}
             >
-              <Flex align="center" gap={isSidebarCollapsed ? 0 : 3}>
+              <Flex align="center" gap={isSidebarCollapsedResolved ? 0 : 3}>
                 <Box
                   minW="30px"
                   h="30px"
@@ -539,13 +550,13 @@ export const StaffDesktopShell = () => {
                 >
                   <FiLogOut size={18} />
                 </Box>
-                {!isSidebarCollapsed ? <Text>Logout</Text> : null}
+                {!isSidebarCollapsedResolved ? <Text>Logout</Text> : null}
               </Flex>
             </Button>
           </VStack>
         </Box>
 
-        <Box flex={1} minW={0} h="100%" display="flex" flexDirection="column">
+        <Box flex={1} minW={0} h="100%" display="flex" flexDirection="column" overflowX="hidden">
           <PosTopBar
             session={session}
             isOnline={isOnline}
@@ -567,8 +578,10 @@ export const StaffDesktopShell = () => {
               void logout();
             }}
           />
-          <Box flex={1} overflowY="auto">
-            <Box p={4}>{content}</Box>
+          <Box flex={1} overflowY="auto" overflowX="hidden">
+            <Box p={{ base: 3, xl: 4 }} minW={0}>
+              {content}
+            </Box>
           </Box>
         </Box>
       </HStack>

@@ -312,11 +312,11 @@ export const StaffAttendancePage = () => {
       <Box p={4} bg="white" borderRadius="14px" border="1px solid rgba(132, 79, 52, 0.2)">
         <HStack justify="space-between" mb={4} flexWrap="wrap" gap={3}>
           <HStack spacing={3}>
-            <FormControl w="190px">
+            <FormControl w={{ base: "full", sm: "190px" }}>
               <FormLabel fontWeight={700}>Date</FormLabel>
               <Input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
             </FormControl>
-            <FormControl w="180px">
+            <FormControl w={{ base: "full", sm: "180px" }}>
               <FormLabel fontWeight={700}>Records per page</FormLabel>
               <Select
                 value={String(limit)}

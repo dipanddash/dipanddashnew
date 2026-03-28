@@ -485,7 +485,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
   }
 
   return (
-    <Box>
+    <Box overflowX="hidden">
       <HStack
         mt={1}
         mb={3}
@@ -554,7 +554,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
             </>
           )}
         </HStack>
-        <VStack align="end" spacing={0}>
+        <VStack align={{ base: "start", md: "end" }} spacing={0} w={{ base: "full", md: "auto" }}>
           <Button size="xs" variant="outline" mb={1} isLoading={isRefreshingStock} onClick={() => void handleRefreshStock()}>
             Refresh Stock
           </Button>
@@ -604,6 +604,8 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
             borderRadius="12px"
             bg="white"
             justify="space-between"
+            flexWrap="wrap"
+            gap={3}
           >
             <Text color="#6D584E" fontSize="sm">
               Customer:{" "}
@@ -611,14 +613,14 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
                 {currentOrder.customer ? `${currentOrder.customer.name} (${currentOrder.customer.phone})` : "Not selected"}
               </Text>
             </Text>
-            <HStack>
+            <HStack flexWrap="wrap" gap={2} justify={{ base: "flex-start", md: "flex-end" }} w={{ base: "full", md: "auto" }}>
               {currentOrder.orderType === "dine_in" ? (
                 <Input
                   placeholder="Table no / name"
                   size="sm"
                   value={currentOrder.tableLabel ?? ""}
                   onChange={(event) => setTableLabel(event.target.value)}
-                  w="180px"
+                  w={{ base: "full", sm: "220px", md: "180px" }}
                 />
               ) : null}
               <Button size="sm" variant="outline" onClick={() => openCustomerStartModal("change")}>
@@ -627,7 +629,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
             </HStack>
           </HStack>
 
-          <Grid templateColumns="minmax(0, 1fr) 420px" gap={4}>
+          <Grid templateColumns={{ base: "1fr", xl: "minmax(0, 1fr) 380px", "2xl": "minmax(0, 1fr) 420px" }} gap={4}>
             <ItemGrid
               snapshot={catalog}
               onAddItem={addItem}

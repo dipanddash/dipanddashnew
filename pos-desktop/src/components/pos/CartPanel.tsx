@@ -116,11 +116,11 @@ export const CartPanel = ({
       borderColor="rgba(132, 79, 52, 0.2)"
       bg="white"
       boxShadow="sm"
-      minH="540px"
+      minH={{ base: "auto", "2xl": "540px" }}
     >
-      <HStack justify="space-between">
+      <HStack justify="space-between" flexWrap="wrap" gap={2}>
         <Text fontWeight={800}>Cart</Text>
-        <HStack spacing={2}>
+        <HStack spacing={2} flexWrap="wrap" w={{ base: "full", md: "auto" }}>
           <Button size="sm" variant="outline" onClick={onOpenCustomerModal}>
             {selectedCustomer ? "Change Customer" : "Select Customer"}
           </Button>
@@ -169,7 +169,7 @@ export const CartPanel = ({
                 />
               </HStack>
 
-              <HStack mt={2} justify="space-between">
+              <HStack mt={2} justify="space-between" flexWrap="wrap" gap={2}>
                 <HStack>
                   <ActionIconButton
                     aria-label={`Decrease quantity of ${line.name}`}
@@ -200,7 +200,7 @@ export const CartPanel = ({
               </HStack>
 
               {(line.lineType === "item" || line.lineType === "combo") && !line.isComplimentary ? (
-                <HStack mt={2} spacing={2}>
+                <HStack mt={2} spacing={2} flexWrap="wrap">
                   <Select
                     size="sm"
                     value={selectedAddOnByLine[line.lineId] ?? ""}
@@ -301,8 +301,8 @@ export const CartPanel = ({
         </Text>
       ) : null}
 
-      <HStack align="start">
-        <Text fontSize="sm" minW="120px">
+      <HStack align="start" flexDir={{ base: "column", md: "row" }} gap={2}>
+        <Text fontSize="sm" minW={{ base: "auto", md: "120px" }}>
           Manual Discount
         </Text>
         <VStack align="stretch" spacing={1} flex={1}>

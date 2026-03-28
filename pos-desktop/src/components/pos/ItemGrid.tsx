@@ -130,13 +130,14 @@ export const ItemGrid = ({
       boxShadow="sm"
       minH="540px"
     >
-      <HStack justify="space-between">
+      <HStack justify="space-between" flexWrap="wrap" gap={2}>
         <Text fontWeight={800} color="#2A1A14">
           Menu
         </Text>
         <Input
           id="item-search-input"
-          maxW="280px"
+          maxW={{ base: "full", md: "280px" }}
+          w={{ base: "full", md: "auto" }}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search items or combos"

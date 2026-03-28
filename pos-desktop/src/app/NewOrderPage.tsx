@@ -213,25 +213,13 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
         ? "Delivery"
       : "Takeaway";
 
-  const hasAllocatedStock = useMemo(() => {
-    if (!catalog) {
-      return false;
-    }
-    if (!catalog.controls.enforceDailyAllocation) {
-      return true;
-    }
-    return catalog.allocations.some(
-      (allocation) => allocation.remainingQuantity > 0
-    );
-  }, [catalog]);
-
   useEffect(() => {
     if (!allocationWarning) {
       return;
     }
     toast({
       status: "warning",
-      title: "Allocation required",
+      title: "Stock check failed",
       description: allocationWarning,
       duration: 5000
     });
@@ -277,15 +265,6 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
       return;
     }
 
-    if (!hasAllocatedStock) {
-      toast({
-        status: "warning",
-        title: "Admin stock allocation required",
-        description:
-          "No ingredient stock is allocated for today. You cannot take orders until admin allocates stock."
-      });
-      return;
-    }
     const selectedOrderType = currentOrder.orderType;
     const selectedOrderChannel = currentOrder.orderChannel;
     clearOrder();
@@ -299,7 +278,6 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
     closingStatus,
     currentOrder.orderChannel,
     currentOrder.orderType,
-    hasAllocatedStock,
     isPunchedIn,
     openCustomerStartModal,
     setOrderChannel,
@@ -364,7 +342,7 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
       toast({
         status: "success",
         title: "Stock refreshed",
-        description: "Latest admin allocation has been loaded."
+        description: "Latest stock snapshot has been loaded."
       });
     } catch {
       toast({
@@ -561,11 +539,6 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
           <Text color="#6D584E" fontSize="sm">
             Invoice: {currentOrder.invoiceNumber}
           </Text>
-          {!hasAllocatedStock ? (
-            <Text fontSize="xs" color="#B91C1C" fontWeight={700}>
-              No stock allocated by admin for today
-            </Text>
-          ) : null}
           {isPunchedIn !== true ? (
             <Text fontSize="xs" color="#B91C1C" fontWeight={700}>
               {isPunchedIn === false

@@ -89,32 +89,6 @@ export type IngredientStockDetails = {
   lastUpdatedAt: string;
 };
 
-export type AllocationRow = {
-  ingredientId: string;
-  ingredientName: string;
-  categoryId: string;
-  categoryName: string;
-  unit: IngredientUnit;
-  totalStock: number;
-  minStock: number;
-  allocatedQuantity: number;
-  usedQuantity: number;
-  remainingQuantity: number;
-  allocationId: string | null;
-  status: IngredientStockStatus;
-  date: string;
-};
-
-export type IngredientAllocation = {
-  id: string;
-  ingredientId: string;
-  ingredientName?: string;
-  date: string;
-  allocatedQuantity: number;
-  usedQuantity: number;
-  remainingQuantity: number;
-};
-
 export type PaginationData = {
   page: number;
   limit: number;
@@ -206,6 +180,8 @@ export type StockAuditReport = {
   closingSlot: number;
   isCarryForwardClosing: boolean;
   totalIngredients: number;
+  mismatchRows?: number;
+  matchedRows?: number;
   totalExpectedRemaining: number;
   totalReportedRemaining: number;
   totalVariance: number;
@@ -214,6 +190,7 @@ export type StockAuditReport = {
 };
 
 export type StockAuditItemRow = {
+  reportItemId?: string;
   reportId: string;
   reportDate: string;
   staffId: string;
@@ -222,6 +199,12 @@ export type StockAuditItemRow = {
   ingredientId: string;
   ingredientName: string;
   unit: string;
+  openingStockQuantity?: number;
+  purchaseStockQuantity?: number;
+  consumptionQuantity?: number;
+  dumpQuantity?: number;
+  expectedStockQuantity?: number;
+  enteredStockQuantity?: number;
   allocatedQuantity: number;
   usedQuantity: number;
   expectedRemainingQuantity: number;
@@ -231,13 +214,19 @@ export type StockAuditItemRow = {
 };
 
 export type StockAuditData = {
-  date: string;
+  dateFrom: string;
+  dateTo: string;
   stats: {
     totalReports: number;
     staffSubmitted: number;
     totalIngredients: number;
     mismatchedIngredients: number;
     matchedIngredients: number;
+    totalPurchaseStock?: number;
+    totalConsumptionStock?: number;
+    totalDumpStock?: number;
+    totalUnallocatedStock?: number;
+    ingredientsWithUnallocated?: number;
     totalExpectedRemaining: number;
     totalReportedRemaining: number;
     totalVarianceAbs: number;

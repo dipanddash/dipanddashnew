@@ -2,6 +2,7 @@ import { UserRole } from "../../constants/roles";
 import { hashPassword } from "../../utils/password";
 import { UserService } from "../users/user.service";
 import { REPORT_KEYS, type ReportKey } from "../reports/reports.constants";
+import { STAFF_ASSIGNABLE_MODULE_KEYS, type StaffAssignableModuleKey } from "../users/user-access.constants";
 
 export class StaffService {
   private readonly userService = new UserService();
@@ -21,6 +22,21 @@ export class StaffService {
     return [...unique];
   }
 
+  private sanitizeAssignedModules(assignedModules?: string[]): StaffAssignableModuleKey[] {
+    if (!assignedModules?.length) {
+      return [];
+    }
+
+    const allowed = new Set(STAFF_ASSIGNABLE_MODULE_KEYS);
+    const unique = new Set<StaffAssignableModuleKey>();
+    assignedModules.forEach((key) => {
+      if (allowed.has(key as StaffAssignableModuleKey)) {
+        unique.add(key as StaffAssignableModuleKey);
+      }
+    });
+    return [...unique];
+  }
+
   async listStaff(search?: string) {
     const users = await this.userService.listStaff(search);
     return users.map((user) => ({
@@ -31,6 +47,7 @@ export class StaffService {
       role: user.role,
       isActive: user.isActive,
       assignedReports: user.assignedReports ?? [],
+      assignedModules: user.assignedModules ?? [],
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
     }));
@@ -43,6 +60,7 @@ export class StaffService {
     email?: string;
     role: UserRole;
     assignedReports?: string[];
+    assignedModules?: string[];
   }) {
     const passwordHash = await hashPassword(payload.password);
     return this.userService.createStaff({
@@ -52,7 +70,8 @@ export class StaffService {
       passwordHash,
       role: payload.role,
       isActive: true,
-      assignedReports: this.sanitizeAssignedReports(payload.assignedReports)
+      assignedReports: this.sanitizeAssignedReports(payload.assignedReports),
+      assignedModules: this.sanitizeAssignedModules(payload.assignedModules)
     });
   }
 
@@ -63,6 +82,7 @@ export class StaffService {
       email?: string;
       role?: UserRole;
       assignedReports?: string[];
+      assignedModules?: string[];
     }
   ) {
     return this.userService.updateStaff(id, {
@@ -72,7 +92,11 @@ export class StaffService {
       assignedReports:
         payload.assignedReports === undefined
           ? undefined
-          : this.sanitizeAssignedReports(payload.assignedReports)
+          : this.sanitizeAssignedReports(payload.assignedReports),
+      assignedModules:
+        payload.assignedModules === undefined
+          ? undefined
+          : this.sanitizeAssignedModules(payload.assignedModules)
     });
   }
 

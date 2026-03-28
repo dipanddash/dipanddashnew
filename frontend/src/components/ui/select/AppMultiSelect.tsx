@@ -71,7 +71,7 @@ function AppMultiSelectComponent<Option extends AppSelectOption = AppSelectOptio
   );
 
   const portalTarget = useMemo(
-    () => menuPortalTarget ?? (typeof document !== "undefined" ? document.body : null),
+    () => (menuPortalTarget === undefined ? (typeof document !== "undefined" ? document.body : null) : menuPortalTarget),
     [menuPortalTarget]
   );
 
@@ -82,7 +82,7 @@ function AppMultiSelectComponent<Option extends AppSelectOption = AppSelectOptio
         inputId={inputId}
         value={selectedOptions}
         options={options}
-        onChange={(next) => onValueChange(next.map((entry) => entry.value))}
+        onChange={(next) => onValueChange(Array.from(new Set(next.map((entry) => entry.value))))}
         isOptionDisabled={(option) => Boolean(option.isDisabled)}
         isDisabled={isDisabled}
         isClearable={isClearable}
@@ -128,4 +128,3 @@ function AppMultiSelectComponent<Option extends AppSelectOption = AppSelectOptio
 }
 
 export const AppMultiSelect = memo(AppMultiSelectComponent) as typeof AppMultiSelectComponent;
-

@@ -7,10 +7,11 @@ export type AuthUser = {
   email: string | null;
   role: UserRole;
   isActive: boolean;
+  assignedReports: string[];
+  assignedModules: string[];
 };
 
 export type LoginPayload = {
   username: string;
   password: string;
 };
-

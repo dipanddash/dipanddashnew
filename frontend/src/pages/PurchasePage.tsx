@@ -100,6 +100,7 @@ type DraftPurchaseLine = {
   ingredientId: string;
   productId: string;
   quantity: string;
+  quantityUnit: string;
   unitPrice: string;
   updateUnitPrice: boolean;
   note: string;
@@ -112,6 +113,7 @@ const createEmptyLine = (): DraftPurchaseLine => ({
   ingredientId: "",
   productId: "",
   quantity: "1",
+  quantityUnit: "",
   unitPrice: "0",
   updateUnitPrice: false,
   note: ""
@@ -174,7 +176,8 @@ const PurchaseOrderModal = ({
             ingredientCategoryId: matchedIngredient?.categoryId ?? "",
             ingredientId: line.ingredientId ?? "",
             productId: line.productId ?? "",
-            quantity: String(line.stockAdded),
+            quantity: String(line.enteredQuantity ?? line.stockAdded),
+            quantityUnit: line.enteredUnit ?? line.unit,
             unitPrice: String(line.unitPrice),
             updateUnitPrice: line.unitPriceUpdated,
             note: ""
@@ -283,6 +286,7 @@ const PurchaseOrderModal = ({
     const ingredient = (meta?.ingredients ?? []).find((entry) => entry.id === ingredientId);
     updateLine(line.id, {
       ingredientId,
+      quantityUnit: ingredient?.unit ?? line.quantityUnit,
       unitPrice: ingredient ? String(ingredient.perUnitPrice) : line.unitPrice
     });
   };
@@ -291,6 +295,7 @@ const PurchaseOrderModal = ({
     const product = (meta?.products ?? []).find((entry) => entry.id === productId);
     updateLine(line.id, {
       productId,
+      quantityUnit: product?.unit ?? line.quantityUnit,
       unitPrice: product ? String(product.purchaseUnitPrice) : line.unitPrice
     });
   };
@@ -326,6 +331,7 @@ const PurchaseOrderModal = ({
           ingredientId: line.lineType === "ingredient" ? line.ingredientId || undefined : undefined,
           productId: line.lineType === "product" ? line.productId || undefined : undefined,
           quantity,
+          quantityUnit: line.quantityUnit || undefined,
           unitPrice,
           updateUnitPrice: line.updateUnitPrice,
           note: line.note.trim() || undefined
@@ -399,10 +405,14 @@ const PurchaseOrderModal = ({
               {lines.map((line, index) => {
                 const selectedIngredient = (meta?.ingredients ?? []).find((item) => item.id === line.ingredientId);
                 const selectedProduct = (meta?.products ?? []).find((item) => item.id === line.productId);
+                const lineUnitOptions =
+                  line.lineType === "ingredient"
+                    ? selectedIngredient?.unitOptions ?? []
+                    : selectedProduct?.unitOptions ?? [];
 
                 return (
                   <AppCard key={line.id} p={4}>
-                    <SimpleGrid columns={{ base: 1, lg: 6 }} spacing={3}>
+                    <SimpleGrid columns={{ base: 1, lg: 7 }} spacing={3}>
                       <AppSearchableSelect
                         label={`Line ${index + 1} Type`}
                         value={line.lineType}
@@ -412,6 +422,7 @@ const PurchaseOrderModal = ({
                             lineType: value as PurchaseLineType,
                             ingredientId: "",
                             productId: "",
+                            quantityUnit: "",
                             unitPrice: "0"
                           })
                         }
@@ -454,6 +465,25 @@ const PurchaseOrderModal = ({
                         value={line.quantity}
                         onChange={(event) => updateLine(line.id, { quantity: (event.target as HTMLInputElement).value })}
                       />
+                      <FormControl>
+                        <FormLabel>Unit</FormLabel>
+                        <Select
+                          value={line.quantityUnit}
+                          onChange={(event) =>
+                            updateLine(line.id, { quantityUnit: (event.target as HTMLSelectElement).value })
+                          }
+                          bg="white"
+                          borderColor="rgba(193, 14, 14, 0.18)"
+                          focusBorderColor="brand.400"
+                        >
+                          <option value="">Select unit</option>
+                          {lineUnitOptions.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormControl>
                       <AppInput
                         label="Unit Price"
                         type="number"
@@ -488,13 +518,13 @@ const PurchaseOrderModal = ({
                         <Text fontSize="sm" color="#725A50">
                           Stock: {selectedIngredient.currentStock} {selectedIngredient.unit} | Allocated:{" "}
                           {selectedIngredient.allocatedToday} | Used: {selectedIngredient.usedToday} | Pending:{" "}
-                          {selectedIngredient.pendingToday}
+                          {selectedIngredient.pendingToday} | Base Unit: {selectedIngredient.unit}
                         </Text>
                       ) : null}
                       {line.lineType === "product" && selectedProduct ? (
                         <Text fontSize="sm" color="#725A50">
                           Stock: {selectedProduct.currentStock} {selectedProduct.unit} | Min: {selectedProduct.minStock}{" "}
-                          {selectedProduct.unit}
+                          {selectedProduct.unit} | Base Unit: {selectedProduct.unit}
                         </Text>
                       ) : null}
                     </Box>
@@ -596,7 +626,7 @@ const PurchaseOrderModal = ({
             <AppButton
               onClick={() => void handleSave()}
               isLoading={loading}
-              isDisabled={!supplierId || lines.some((line) => !line.quantity || !line.unitPrice)}
+              isDisabled={!supplierId || lines.some((line) => !line.quantity || !line.quantityUnit || !line.unitPrice)}
             >
               {isEditMode ? "Save Purchase Order" : "Create Purchase Order"}
             </AppButton>
@@ -1230,6 +1260,7 @@ export const PurchasePage = () => {
                         )
                       },
                       { key: "totalAmount", header: "Total", render: (row: PurchaseOrderSummary) => formatCurrency(row.totalAmount) },
+                      { key: "createdByUserName", header: "Created By", render: (row: PurchaseOrderSummary) => row.createdByUserName ?? "-" },
                       {
                         key: "action",
                         header: "Action",
@@ -1459,7 +1490,7 @@ export const PurchasePage = () => {
                     </HStack>
                   </AppCard>
                 ) : null}
-                <DataTable columns={[{ key: "itemNameSnapshot", header: "Item" }, { key: "lineType", header: "Type", render: (row: any) => String(row.lineType).toUpperCase() }, { key: "stockAdded", header: "Added", render: (row: any) => `${row.stockAdded} ${row.unit}` }, { key: "unitPrice", header: "Unit Price", render: (row: any) => formatCurrency(row.unitPrice) }, { key: "lineTotal", header: "Line Total", render: (row: any) => formatCurrency(row.lineTotal) }]} rows={selectedOrder.lines as any} />
+                <DataTable columns={[{ key: "itemNameSnapshot", header: "Item" }, { key: "lineType", header: "Type", render: (row: any) => String(row.lineType).toUpperCase() }, { key: "stockAdded", header: "Added", render: (row: any) => `${row.enteredQuantity ?? row.stockAdded} ${row.enteredUnit ?? row.unit}` }, { key: "unitPrice", header: "Unit Price", render: (row: any) => formatCurrency(row.unitPrice) }, { key: "lineTotal", header: "Line Total", render: (row: any) => formatCurrency(row.lineTotal) }]} rows={selectedOrder.lines as any} />
               </VStack>
             ) : null}
           </ModalBody>

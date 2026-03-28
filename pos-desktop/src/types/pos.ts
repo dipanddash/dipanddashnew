@@ -11,6 +11,8 @@ export type StaffSession = {
   username: string;
   fullName: string;
   role: string;
+  assignedReports: string[];
+  assignedModules: string[];
 };
 
 export type CustomerRecord = {
@@ -121,6 +123,14 @@ export type CatalogAllocation = {
   updatedAt: string;
 };
 
+export type CatalogIngredientStock = {
+  ingredientId: string;
+  ingredientName: string;
+  ingredientUnit: string;
+  availableQuantity: number;
+  updatedAt: string;
+};
+
 export type CatalogSnapshot = {
   version: string;
   generatedAt: string;
@@ -133,6 +143,7 @@ export type CatalogSnapshot = {
   comboItems: CatalogComboItem[];
   products: CatalogProduct[];
   offers: CatalogOffer[];
+  ingredientStocks?: CatalogIngredientStock[];
   allocations: CatalogAllocation[];
   controls: {
     isBillingEnabled: boolean;

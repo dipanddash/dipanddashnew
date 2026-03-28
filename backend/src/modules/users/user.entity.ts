@@ -34,6 +34,9 @@ export class User {
   @Column({ type: "text", array: true, default: () => "'{}'" })
   assignedReports!: string[];
 
+  @Column({ type: "text", array: true, default: () => "'{}'" })
+  assignedModules!: string[];
+
   @CreateDateColumn({ type: "timestamptz" })
   createdAt!: Date;
 

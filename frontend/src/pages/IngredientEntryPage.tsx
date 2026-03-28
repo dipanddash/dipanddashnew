@@ -3,9 +3,8 @@ import {
   FormControl,
   FormLabel,
   HStack,
-  Input,
-  SimpleGrid,
   Select,
+  SimpleGrid,
   Switch,
   Tab,
   TabList,
@@ -18,44 +17,33 @@ import {
 } from "@chakra-ui/react";
 import { Edit2, Eye, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SkeletonTable } from "@/components/feedback/SkeletonTable";
 import { AppCard } from "@/components/ui/AppCard";
-import { AppButton } from "@/components/ui/AppButton";
 import { ActionIconButton } from "@/components/ui/ActionIconButton";
+import { AppButton } from "@/components/ui/AppButton";
 import { AppInput } from "@/components/ui/AppInput";
 import { DataTable } from "@/components/ui/DataTable";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useAppToast } from "@/hooks/useAppToast";
 import { CategoryFormModal } from "@/features/ingredients/components/CategoryFormModal";
 import { IngredientFormModal } from "@/features/ingredients/components/IngredientFormModal";
 import { StockDetailsModal } from "@/features/ingredients/components/StockDetailsModal";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useAppToast } from "@/hooks/useAppToast";
 import { ingredientsService } from "@/services/ingredients.service";
 import type {
-  AllocationRow,
   IngredientCategory,
+  IngredientAllocationStats,
   IngredientListItem,
   IngredientStockDetails,
   IngredientStockLog,
-  IngredientAllocationStats,
-  PosBillingControl,
   IngredientUnit,
   PaginationData
 } from "@/types/ingredient";
 import { extractErrorMessage } from "@/utils/api-error";
-import { formatQuantity, formatQuantityWithUnit } from "@/utils/quantity";
-
-const getTodayDate = () => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+import { formatQuantityWithUnit } from "@/utils/quantity";
 
 const defaultPagination: PaginationData = {
   page: 1,
@@ -110,57 +98,6 @@ const statusBadge = (status: "LOW_STOCK" | "OK") => (
   </Box>
 );
 
-const chartColors = ["#B91C1C", "#16A34A", "#D97706", "#7C2D12", "#C2410C", "#15803D"];
-
-type StaffUsageStatsRow = IngredientAllocationStats["insights"]["staffUsageSummary"][number] & {
-  id: string;
-  rank: number;
-  activity: "High" | "Medium" | "Low";
-};
-
-const StatsMetricCard = ({
-  label,
-  value,
-  helper
-}: {
-  label: string;
-  value: string;
-  helper?: string;
-}) => (
-  <Box
-    p={4}
-    borderRadius="18px"
-    border="1px solid"
-    borderColor="rgba(133, 78, 48, 0.24)"
-    bg="linear-gradient(180deg, #FFFFFF 0%, #FFF7EA 100%)"
-    boxShadow="0 10px 18px rgba(72, 29, 11, 0.08)"
-    minH="118px"
-    position="relative"
-    overflow="hidden"
-  >
-    <Box
-      position="absolute"
-      right="-18px"
-      top="-18px"
-      w="60px"
-      h="60px"
-      bg="radial-gradient(circle, rgba(217,119,6,0.26) 0%, rgba(217,119,6,0) 70%)"
-      pointerEvents="none"
-    />
-    <Text fontSize="sm" color="#7A6258" fontWeight={600}>
-      {label}
-    </Text>
-    <Text mt={2} fontSize="2xl" fontWeight={900} color="#2A1A14">
-      {value}
-    </Text>
-    {helper ? (
-      <Text mt={1} fontSize="xs" color="#8A6F63">
-        {helper}
-      </Text>
-    ) : null}
-  </Box>
-);
-
 export const IngredientEntryPage = () => {
   const toast = useAppToast();
 
@@ -196,19 +133,8 @@ export const IngredientEntryPage = () => {
   const [stockDetailsLoading, setStockDetailsLoading] = useState(false);
   const [stockDetails, setStockDetails] = useState<IngredientStockDetails | null>(null);
   const [stockLogs, setStockLogs] = useState<IngredientStockLog[]>([]);
-
-  const [allocationRows, setAllocationRows] = useState<AllocationRow[]>([]);
-  const [allocationPagination, setAllocationPagination] = useState<PaginationData>(defaultPagination);
-  const [allocationLoading, setAllocationLoading] = useState(true);
-  const [allocationSearch, setAllocationSearch] = useState("");
-  const debouncedAllocationSearch = useDebouncedValue(allocationSearch, 400);
-  const [allocationCategoryFilter, setAllocationCategoryFilter] = useState("");
-  const [allocationDate, setAllocationDate] = useState(getTodayDate());
-  const [allocationPage, setAllocationPage] = useState(1);
-  const [allocationLimit, setAllocationLimit] = useState(5);
-  const [allocationDrafts, setAllocationDrafts] = useState<Record<string, string>>({});
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, boolean>>({});
-  const [statsRows, setStatsRows] = useState<AllocationRow[]>([]);
+  const [statsRows, setStatsRows] = useState<IngredientListItem[]>([]);
   const [statsPagination, setStatsPagination] = useState<PaginationData>(defaultPagination);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsSearch, setStatsSearch] = useState("");
@@ -216,14 +142,8 @@ export const IngredientEntryPage = () => {
   const [statsCategoryFilter, setStatsCategoryFilter] = useState("");
   const [statsPage, setStatsPage] = useState(1);
   const [statsLimit, setStatsLimit] = useState(8);
-  const [allocationStats, setAllocationStats] = useState<IngredientAllocationStats | null>(null);
-  const [allocationStatsLoading, setAllocationStatsLoading] = useState(true);
-  const [bulkActionLoading, setBulkActionLoading] = useState(false);
-  const [allocationSaveLoading, setAllocationSaveLoading] = useState(false);
-  const [posBillingControl, setPosBillingControl] = useState<PosBillingControl | null>(null);
-  const [posControlLoading, setPosControlLoading] = useState(false);
-  const assignAllDialog = useDisclosure();
-  const posControlDialog = useDisclosure();
+  const [stockInsights, setStockInsights] = useState<IngredientAllocationStats | null>(null);
+  const [stockInsightsLoading, setStockInsightsLoading] = useState(true);
 
   const fetchCategoryOptions = useCallback(async () => {
     try {
@@ -282,80 +202,39 @@ export const IngredientEntryPage = () => {
     }
   }, [debouncedIngredientSearch, ingredientCategoryFilter, ingredientLimit, ingredientPage, toast]);
 
-  const fetchAllocations = useCallback(async () => {
-    setAllocationLoading(true);
-    try {
-      const response = await ingredientsService.getAllocations({
-        date: allocationDate,
-        search: debouncedAllocationSearch || undefined,
-        categoryId: allocationCategoryFilter || undefined,
-        page: allocationPage,
-        limit: allocationLimit
-      });
-      setAllocationRows(response.data.rows);
-      setAllocationPagination(response.data.pagination);
-      setAllocationDrafts(
-        response.data.rows.reduce<Record<string, string>>((accumulator, row) => {
-          accumulator[row.ingredientId] = "";
-          return accumulator;
-        }, {})
-      );
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to fetch allocation data."));
-    } finally {
-      setAllocationLoading(false);
-    }
-  }, [
-    allocationCategoryFilter,
-    allocationDate,
-    allocationLimit,
-    allocationPage,
-    debouncedAllocationSearch,
-    toast
-  ]);
-
   const fetchStatsRows = useCallback(async () => {
     setStatsLoading(true);
     try {
-      const response = await ingredientsService.getAllocations({
-        overall: true,
+      const response = await ingredientsService.getIngredients({
         search: debouncedStatsSearch || undefined,
         categoryId: statsCategoryFilter || undefined,
+        includeInactive: true,
         page: statsPage,
         limit: statsLimit
       });
-      setStatsRows(response.data.rows);
+      setStatsRows(response.data.ingredients);
       setStatsPagination(response.data.pagination);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to fetch stats table."));
+      toast.error(extractErrorMessage(error, "Unable to fetch stock stats table."));
     } finally {
       setStatsLoading(false);
     }
   }, [debouncedStatsSearch, statsCategoryFilter, statsLimit, statsPage, toast]);
 
-  const fetchAllocationStats = useCallback(async () => {
-    setAllocationStatsLoading(true);
+  const fetchStockInsights = useCallback(async () => {
+    setStockInsightsLoading(true);
     try {
       const response = await ingredientsService.getAllocationStats({
         search: debouncedStatsSearch || undefined,
         categoryId: statsCategoryFilter || undefined
       });
-      setAllocationStats(response.data);
+      setStockInsights(response.data);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to fetch stock analytics."));
+      toast.error(extractErrorMessage(error, "Unable to fetch stock insights."));
     } finally {
-      setAllocationStatsLoading(false);
+      setStockInsightsLoading(false);
     }
   }, [debouncedStatsSearch, statsCategoryFilter, toast]);
-
-  const fetchPosBillingControl = useCallback(async () => {
-    try {
-      const response = await ingredientsService.getPosBillingControl();
-      setPosBillingControl(response.data);
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to fetch POS billing control."));
-    }
-  }, [toast]);
 
   useEffect(() => {
     void fetchCategoryOptions();
@@ -370,20 +249,12 @@ export const IngredientEntryPage = () => {
   }, [fetchIngredients]);
 
   useEffect(() => {
-    void fetchAllocations();
-  }, [fetchAllocations]);
-
-  useEffect(() => {
-    void fetchAllocationStats();
-  }, [fetchAllocationStats]);
-
-  useEffect(() => {
     void fetchStatsRows();
   }, [fetchStatsRows]);
 
   useEffect(() => {
-    void fetchPosBillingControl();
-  }, [fetchPosBillingControl]);
+    void fetchStockInsights();
+  }, [fetchStockInsights]);
 
   useEffect(() => {
     setCategoryPage(1);
@@ -394,39 +265,12 @@ export const IngredientEntryPage = () => {
   }, [debouncedIngredientSearch, ingredientCategoryFilter]);
 
   useEffect(() => {
-    setAllocationPage(1);
-  }, [allocationCategoryFilter, allocationDate, debouncedAllocationSearch]);
-
-  useEffect(() => {
     setStatsPage(1);
   }, [debouncedStatsSearch, statsCategoryFilter]);
 
   const categoryOptions = useMemo(
     () => allCategories.map((category) => ({ label: category.name, value: category.id })),
     [allCategories]
-  );
-
-  const dirtyAllocationRows = useMemo(
-    () =>
-      allocationRows.filter((row) => {
-        const rawDraft = allocationDrafts[row.ingredientId];
-        if (rawDraft === undefined) {
-          return false;
-        }
-
-        const trimmed = rawDraft.trim();
-        if (!trimmed.length) {
-          return false;
-        }
-
-        const draftValue = Number(trimmed);
-        if (!Number.isFinite(draftValue)) {
-          return true;
-        }
-
-        return draftValue > 0;
-      }),
-    [allocationDrafts, allocationRows]
   );
 
   const handleCategorySubmit = useCallback(
@@ -442,29 +286,14 @@ export const IngredientEntryPage = () => {
         }
 
         categoryModal.onClose();
-        await Promise.all([
-          fetchCategories(),
-          fetchCategoryOptions(),
-          fetchIngredients(),
-          fetchAllocations(),
-          fetchAllocationStats(),
-          fetchStatsRows()
-        ]);
+        await Promise.all([fetchCategories(), fetchCategoryOptions(), fetchIngredients()]);
       } catch (error) {
         toast.error(extractErrorMessage(error, "Unable to save category."));
       } finally {
         setCategoryMutationLoading(false);
       }
     },
-    [
-      categoryModal,
-      fetchAllocations,
-      fetchCategories,
-      fetchCategoryOptions,
-      fetchIngredients,
-      selectedCategory,
-      toast
-    ]
+    [categoryModal, fetchCategories, fetchCategoryOptions, fetchIngredients, selectedCategory, toast]
   );
 
   const handleDeleteCategory = useCallback(async () => {
@@ -482,28 +311,13 @@ export const IngredientEntryPage = () => {
       const response = await ingredientsService.deleteCategory(selectedCategory.id);
       toast.success(response.message);
       deleteCategoryDialog.onClose();
-      await Promise.all([
-        fetchCategories(),
-        fetchCategoryOptions(),
-        fetchIngredients(),
-        fetchAllocations(),
-        fetchAllocationStats(),
-        fetchStatsRows()
-      ]);
+      await Promise.all([fetchCategories(), fetchCategoryOptions(), fetchIngredients()]);
     } catch (error) {
       toast.error(extractErrorMessage(error, "Unable to delete category."));
     } finally {
       setCategoryMutationLoading(false);
     }
-  }, [
-    deleteCategoryDialog,
-    fetchAllocations,
-    fetchCategories,
-    fetchCategoryOptions,
-    fetchIngredients,
-    selectedCategory,
-    toast
-  ]);
+  }, [deleteCategoryDialog, fetchCategories, fetchCategoryOptions, fetchIngredients, selectedCategory, toast]);
 
   const handleIngredientSubmit = useCallback(
     async (values: {
@@ -532,14 +346,14 @@ export const IngredientEntryPage = () => {
         }
 
         ingredientModal.onClose();
-        await Promise.all([fetchIngredients(), fetchAllocations(), fetchAllocationStats(), fetchStatsRows()]);
+        await Promise.all([fetchIngredients(), fetchCategories()]);
       } catch (error) {
         toast.error(extractErrorMessage(error, "Unable to save ingredient."));
       } finally {
         setIngredientMutationLoading(false);
       }
     },
-    [fetchAllocations, fetchIngredients, ingredientModal, selectedIngredient, toast]
+    [fetchCategories, fetchIngredients, ingredientModal, selectedIngredient, toast]
   );
 
   const handleDeleteIngredient = useCallback(async () => {
@@ -552,13 +366,13 @@ export const IngredientEntryPage = () => {
       const response = await ingredientsService.deleteIngredient(selectedIngredient.id);
       toast.success(response.message);
       deleteIngredientDialog.onClose();
-      await Promise.all([fetchIngredients(), fetchAllocations(), fetchAllocationStats(), fetchStatsRows()]);
+      await Promise.all([fetchIngredients(), fetchCategories()]);
     } catch (error) {
       toast.error(extractErrorMessage(error, "Unable to delete ingredient."));
     } finally {
       setIngredientMutationLoading(false);
     }
-  }, [deleteIngredientDialog, fetchAllocations, fetchIngredients, selectedIngredient, toast]);
+  }, [deleteIngredientDialog, fetchCategories, fetchIngredients, selectedIngredient, toast]);
 
   const openStockDetails = useCallback(
     async (ingredient: IngredientListItem) => {
@@ -595,158 +409,16 @@ export const IngredientEntryPage = () => {
         try {
           const response = await ingredientsService.updateIngredient(ingredient.id, { isActive: nextIsActive });
           toast.success(response.message);
-          await Promise.all([fetchIngredients(), fetchAllocations(), fetchAllocationStats(), fetchStatsRows()]);
+          await fetchIngredients();
         } catch (error) {
           toast.error(
-            extractErrorMessage(
-              error,
-              nextIsActive ? "Unable to enable ingredient." : "Unable to disable ingredient."
-            )
+            extractErrorMessage(error, nextIsActive ? "Unable to enable ingredient." : "Unable to disable ingredient.")
           );
         }
       });
     },
-    [fetchAllocations, fetchIngredients, runRowAction, toast]
+    [fetchIngredients, runRowAction, toast]
   );
-
-  const handleSaveAllocationChanges = useCallback(async () => {
-    if (!dirtyAllocationRows.length) {
-      toast.info("No allocation changes to save.");
-      return;
-    }
-
-    type DraftPayload = { row: AllocationRow; allocatedQuantity: number; addQuantity: number };
-    const payloadRows: DraftPayload[] = [];
-
-    for (const row of dirtyAllocationRows) {
-      const rawDraft = allocationDrafts[row.ingredientId];
-      const trimmed = rawDraft?.trim() ?? "";
-
-      if (!trimmed.length) {
-        toast.warning(`Enter allocation quantity for ${row.ingredientName}.`);
-        return;
-      }
-
-      const draftValue = Number(trimmed);
-      if (!Number.isFinite(draftValue) || draftValue <= 0) {
-        toast.warning(`Add quantity for ${row.ingredientName} must be a valid number greater than zero.`);
-        return;
-      }
-
-      const addQuantity = Number(draftValue.toFixed(3));
-
-      const maxAddable = Number(row.totalStock.toFixed(3));
-      if (addQuantity > maxAddable + 0.000001) {
-        toast.warning(
-          `Insufficient stock for ${row.ingredientName}. Maximum addable is ${formatQuantityWithUnit(maxAddable, row.unit)}.`
-        );
-        return;
-      }
-
-      const nextAllocatedTotal = Number((row.allocatedQuantity + addQuantity).toFixed(3));
-      payloadRows.push({ row, allocatedQuantity: nextAllocatedTotal, addQuantity });
-    }
-
-    setAllocationSaveLoading(true);
-    let successCount = 0;
-    const failedRows: string[] = [];
-
-    try {
-      for (const payload of payloadRows) {
-        try {
-          await ingredientsService.saveAllocation({
-            ingredientId: payload.row.ingredientId,
-            date: allocationDate,
-            allocatedQuantity: payload.allocatedQuantity
-          });
-          successCount += 1;
-        } catch (error) {
-          failedRows.push(`${payload.row.ingredientName}: ${extractErrorMessage(error, "save failed")}`);
-        }
-      }
-
-      if (successCount > 0) {
-        await Promise.all([fetchAllocations(), fetchIngredients(), fetchStatsRows(), fetchAllocationStats()]);
-      }
-
-      if (!failedRows.length) {
-        toast.success(`Allocated additional stock for ${successCount} ingredient(s).`);
-        return;
-      }
-
-      if (successCount > 0) {
-        toast.warning(
-          `Saved ${successCount} ingredient(s). Failed ${failedRows.length}. ${failedRows.slice(0, 2).join(" | ")}`
-        );
-        return;
-      }
-
-      toast.error(`Unable to save allocation changes. ${failedRows.slice(0, 2).join(" | ")}`);
-    } finally {
-      setAllocationSaveLoading(false);
-    }
-  }, [
-    allocationDate,
-    allocationDrafts,
-    dirtyAllocationRows,
-    fetchAllocationStats,
-    fetchAllocations,
-    fetchIngredients,
-    fetchStatsRows,
-    toast
-  ]);
-
-  const handleAssignAllStock = useCallback(async () => {
-    setBulkActionLoading(true);
-    try {
-      const response = await ingredientsService.assignAllStockToDate({
-        date: allocationDate
-      });
-      toast.success(
-        `${response.message} Allocated: ${response.data.summary.allocatedCount}, skipped: ${response.data.summary.skippedCount}.`
-      );
-      assignAllDialog.onClose();
-      await Promise.all([fetchAllocations(), fetchIngredients(), fetchAllocationStats(), fetchStatsRows()]);
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to allocate all available stock."));
-    } finally {
-      setBulkActionLoading(false);
-    }
-  }, [
-    allocationDate,
-    assignAllDialog,
-    fetchAllocationStats,
-    fetchAllocations,
-    fetchIngredients,
-    fetchStatsRows,
-    toast
-  ]);
-
-  const handleTogglePosBillingControl = useCallback(async () => {
-    if (!posBillingControl) {
-      return;
-    }
-
-    setPosControlLoading(true);
-    try {
-      const nextEnabled = !posBillingControl.isBillingEnabled;
-      const response = await ingredientsService.updatePosBillingControl({
-        isBillingEnabled: nextEnabled,
-        reason: nextEnabled ? "" : "Paused by admin from Ingredient Stock & Allocation control."
-      });
-      setPosBillingControl(response.data);
-      posControlDialog.onClose();
-      toast.success(
-        nextEnabled
-          ? "POS billing is enabled. Staff can take orders now."
-          : "POS billing is paused. Staff cannot take new orders."
-      );
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to update POS billing control."));
-    } finally {
-      setPosControlLoading(false);
-    }
-  }, [posBillingControl, posControlDialog, toast]);
 
   const categoryColumns = useMemo(
     () =>
@@ -916,15 +588,15 @@ export const IngredientEntryPage = () => {
     [deleteIngredientDialog, handleToggleIngredientStatus, ingredientModal, openStockDetails, rowActionLoading]
   );
 
-  const allocationColumns = useMemo(
+  const statsColumns = useMemo(
     () =>
       [
         {
           key: "ingredient",
           header: "Ingredient",
-          render: (row: AllocationRow) => (
+          render: (row: IngredientListItem) => (
             <VStack align="start" spacing={0}>
-              <Text fontWeight={700}>{row.ingredientName}</Text>
+              <Text fontWeight={700}>{row.name}</Text>
               <Text fontSize="sm" color="#6F5A50">
                 {row.categoryName} | {row.unit.toUpperCase()}
               </Text>
@@ -933,198 +605,49 @@ export const IngredientEntryPage = () => {
         },
         {
           key: "totalStock",
-          header: "Total Stock",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.totalStock, row.unit)
+          header: "Current Stock",
+          render: (row: IngredientListItem) => formatQuantityWithUnit(row.totalStock, row.unit)
         },
         {
-          key: "allocated",
-          header: "Allocated",
-          render: (row: AllocationRow) => {
-            const rawDraft = allocationDrafts[row.ingredientId] ?? "";
-            const trimmedDraft = rawDraft.trim();
-            const parsedDraft = Number(trimmedDraft);
-            const addQuantity = Number.isFinite(parsedDraft) && parsedDraft > 0 ? Number(parsedDraft.toFixed(3)) : 0;
-            const projectedAllocated = Number((row.allocatedQuantity + addQuantity).toFixed(3));
-            const projectedStock = Number(Math.max(row.totalStock - addQuantity, 0).toFixed(3));
-
+          key: "minStock",
+          header: "Min Stock",
+          render: (row: IngredientListItem) => formatQuantityWithUnit(row.minStock, row.unit)
+        },
+        {
+          key: "stockGap",
+          header: "Stock Gap",
+          render: (row: IngredientListItem) => {
+            const gap = Number((row.totalStock - row.minStock).toFixed(3));
+            const isDeficit = gap < 0;
             return (
-              <VStack align="start" spacing={1}>
-                <Text fontSize="xs" color="#7A6258">
-                  Current: {formatQuantityWithUnit(row.allocatedQuantity, row.unit)}
-                </Text>
-                <Input
-                  size="sm"
-                  type="number"
-                  step="0.001"
-                  value={rawDraft}
-                  onChange={(event) =>
-                    setAllocationDrafts((previous) => ({
-                      ...previous,
-                      [row.ingredientId]: event.target.value
-                    }))
-                  }
-                  bg="white"
-                  maxW="130px"
-                  placeholder={`Add ${row.unit}`}
-                />
-                {addQuantity > 0 ? (
-                  <Text fontSize="xs" color="#6B4F43" fontWeight={600}>
-                    New: {formatQuantityWithUnit(projectedAllocated, row.unit)} | Stock left:{" "}
-                    {formatQuantityWithUnit(projectedStock, row.unit)}
-                  </Text>
-                ) : null}
-              </VStack>
+              <Text fontWeight={700} color={isDeficit ? "red.700" : "green.700"}>
+                {isDeficit ? "-" : "+"}
+                {formatQuantityWithUnit(Math.abs(gap), row.unit)}
+              </Text>
             );
           }
-        },
-        {
-          key: "used",
-          header: "Used",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.usedQuantity, row.unit)
-        },
-        {
-          key: "remainingQuantity",
-          header: "Remaining",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.remainingQuantity, row.unit)
         },
         {
           key: "status",
           header: "Status",
-          render: (row: AllocationRow) => statusBadge(row.status)
-        }
-      ] as Array<{ key: string; header: string; render?: (row: AllocationRow) => ReactNode }>,
-    [allocationDrafts]
-  );
-
-  const statsTableColumns = useMemo(
-    () =>
-      [
-        {
-          key: "ingredientName",
-          header: "Ingredient",
-          render: (row: AllocationRow) => (
-            <VStack align="start" spacing={0}>
-              <Text fontWeight={700}>{row.ingredientName}</Text>
-              <Text fontSize="xs" color="#7A6258">
-                {row.categoryName} | {row.unit.toUpperCase()}
-              </Text>
-            </VStack>
-          )
-        },
-        {
-          key: "totalStock",
-          header: "Current Stock",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.totalStock, row.unit)
-        },
-        {
-          key: "allocatedQuantity",
-          header: "Allocated",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.allocatedQuantity, row.unit)
-        },
-        {
-          key: "usedQuantity",
-          header: "Used",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.usedQuantity, row.unit)
-        },
-        {
-          key: "remainingQuantity",
-          header: "Remaining",
-          render: (row: AllocationRow) => formatQuantityWithUnit(row.remainingQuantity, row.unit)
-        },
-        {
-          key: "allocationHealth",
-          header: "Allocation Health",
-          render: (row: AllocationRow) => {
-            const ratio = row.allocatedQuantity > 0 ? row.usedQuantity / row.allocatedQuantity : 0;
-            const label =
-              row.allocatedQuantity <= 0
-                ? "Not Allocated"
-                : ratio >= 1
-                  ? "Exceeded"
-                  : ratio >= 0.8
-                    ? "Near Limit"
-                    : "Safe";
-            const bg =
-              label === "Exceeded"
-                ? "red.100"
-                : label === "Near Limit"
-                  ? "orange.100"
-                  : label === "Not Allocated"
-                    ? "gray.100"
-                    : "green.100";
-            const color =
-              label === "Exceeded"
-                ? "red.700"
-                : label === "Near Limit"
-                  ? "orange.700"
-                  : label === "Not Allocated"
-                    ? "gray.700"
-                    : "green.700";
-            return (
-              <Box px={3} py={1} borderRadius="full" bg={bg} color={color} fontWeight={700} fontSize="xs" w="fit-content">
-                {label}
+          render: (row: IngredientListItem) =>
+            row.isActive ? (
+              statusBadge(row.status)
+            ) : (
+              <Box px={3} py={1} borderRadius="full" fontSize="xs" fontWeight={700} bg="gray.100" color="gray.700" w="fit-content">
+                Inactive
               </Box>
-            );
-          }
+            )
         }
-      ] as Array<{ key: string; header: string; render?: (row: AllocationRow) => ReactNode }>,
+      ] as Array<{ key: string; header: string; render?: (row: IngredientListItem) => ReactNode }>,
     []
-  );
-
-  const staffUsageColumns = useMemo(
-    () =>
-      [
-        { key: "staffName", header: "Staff" },
-        { key: "ingredientCount", header: "Ingredients Used" },
-        {
-          key: "rank",
-          header: "Usage Rank",
-          render: (row: { rank: number }) => `#${row.rank}`
-        },
-        {
-          key: "activity",
-          header: "Activity",
-          render: (row: { activity: "High" | "Medium" | "Low" }) => (
-            <Box
-              px={3}
-              py={1}
-              borderRadius="full"
-              w="fit-content"
-              fontSize="xs"
-              fontWeight={700}
-              bg={row.activity === "High" ? "green.100" : row.activity === "Medium" ? "orange.100" : "gray.100"}
-              color={row.activity === "High" ? "green.700" : row.activity === "Medium" ? "orange.700" : "gray.700"}
-            >
-              {row.activity}
-            </Box>
-          )
-        }
-      ] as Array<{
-        key: string;
-        header: string;
-        render?: (row: StaffUsageStatsRow) => ReactNode;
-      }>,
-    []
-  );
-
-  const statusChartData = allocationStats?.charts.statusBreakdown ?? [];
-  const topUsedChartData = allocationStats?.charts.topUsedIngredients ?? [];
-  const staffUsageRows = useMemo<StaffUsageStatsRow[]>(
-    () =>
-      (allocationStats?.insights.staffUsageSummary ?? []).map((row, index) => ({
-        ...row,
-        id: row.staffId,
-        rank: index + 1,
-        activity: row.ingredientCount >= 10 ? "High" : row.ingredientCount >= 5 ? "Medium" : "Low"
-      })),
-    [allocationStats]
   );
 
   return (
     <VStack spacing={6} align="stretch">
       <PageHeader
         title="Ingredient & Stock Management"
-        subtitle="Manage categories, ingredients, stock operations and daily allocations with low-stock visibility."
+        subtitle="Manage categories, ingredients, and stock operations with clear visibility."
       />
 
       <Tabs variant="soft-rounded" colorScheme="brand" isLazy>
@@ -1132,16 +655,12 @@ export const IngredientEntryPage = () => {
           <Tab>Stats</Tab>
           <Tab>Categories</Tab>
           <Tab>Ingredients</Tab>
-          <Tab>Stock & Allocation</Tab>
         </TabList>
         <TabPanels>
           <TabPanel px={0}>
-            <AppCard
-              title="Allocation Stats"
-              subtitle="Analyze stock, allocation and usage with search and category filters."
-            >
+            <AppCard title="Stock Stats" subtitle="Useful ingredient stock insights for day-to-day decisions.">
               <VStack spacing={4} align="stretch">
-                <SimpleGrid columns={{ base: 1, md: 3, xl: 3 }} spacing={4}>
+                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                   <AppInput
                     label="Search Ingredient"
                     placeholder="Search ingredient for stats"
@@ -1150,10 +669,7 @@ export const IngredientEntryPage = () => {
                   />
                   <FormControl>
                     <FormLabel>Category</FormLabel>
-                    <Select
-                      value={statsCategoryFilter}
-                      onChange={(event) => setStatsCategoryFilter(event.target.value)}
-                    >
+                    <Select value={statsCategoryFilter} onChange={(event) => setStatsCategoryFilter(event.target.value)}>
                       <option value="">All Categories</option>
                       {categoryOptions.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -1180,170 +696,71 @@ export const IngredientEntryPage = () => {
                   </FormControl>
                 </SimpleGrid>
 
-                {allocationStatsLoading || !allocationStats ? (
+                {stockInsightsLoading || !stockInsights ? (
                   <SkeletonTable />
                 ) : (
-                  <VStack align="stretch" spacing={4}>
-                    <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={3}>
-                      <StatsMetricCard
-                        label="Ingredients"
-                        value={String(allocationStats.totals.totalIngredients)}
-                        helper={`${allocationStats.totals.healthyStockIngredients} healthy ingredients`}
-                      />
-                      <StatsMetricCard
-                        label="Allocated Ingredients"
-                        value={String(allocationStats.totals.allocatedIngredients)}
-                        helper={`${allocationStats.totals.missingAllocationIngredients} without allocation`}
-                      />
-                      <StatsMetricCard
-                        label="Low Stock Alerts"
-                        value={String(allocationStats.totals.lowStockIngredients)}
-                        helper="Needs replenishment"
-                      />
-                      <StatsMetricCard
-                        label="Active Staff Usage"
-                        value={String(allocationStats.insights.staffUsageSummary.length)}
-                        helper={
-                          allocationStats.insights.mostUsedIngredient
-                            ? `Top usage: ${allocationStats.insights.mostUsedIngredient.ingredientName}`
-                            : "No usage tracked yet"
-                        }
-                      />
-                    </SimpleGrid>
-
-                    <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={4}>
-                      <Box
-                        p={4}
-                        borderRadius="16px"
-                        border="1px solid"
-                        borderColor="rgba(132, 79, 52, 0.2)"
-                        bg="linear-gradient(180deg, #FFFFFF 0%, #FFF9EE 100%)"
-                      >
-                        <Text fontWeight={800} color="#2A1A14" mb={2}>
-                          Stock Health Distribution
-                        </Text>
-                        <Box h="220px">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                              <Pie
-                                data={statusChartData}
-                                dataKey="value"
-                                nameKey="label"
-                                innerRadius={58}
-                                outerRadius={88}
-                                paddingAngle={2}
-                              >
-                                {statusChartData.map((_, index) => (
-                                  <Cell key={`stats-status-${index}`} fill={chartColors[index % chartColors.length]} />
-                                ))}
-                              </Pie>
-                              <Tooltip />
-                            </PieChart>
-                          </ResponsiveContainer>
-                        </Box>
-                      </Box>
-
-                      <Box
-                        p={4}
-                        borderRadius="16px"
-                        border="1px solid"
-                        borderColor="rgba(132, 79, 52, 0.2)"
-                        bg="linear-gradient(180deg, #FFFFFF 0%, #FFF9EE 100%)"
-                      >
-                        <Text fontWeight={800} color="#2A1A14" mb={2}>
-                          Top Used Ingredients
-                        </Text>
-                        <VStack align="stretch" spacing={3}>
-                          {topUsedChartData.length ? (
-                            topUsedChartData.slice(0, 5).map((entry, index) => (
-                              <Box
-                                key={entry.ingredientId}
-                                p={3}
-                                borderRadius="12px"
-                                border="1px solid"
-                                borderColor="rgba(132, 79, 52, 0.2)"
-                                bg="rgba(255,255,255,0.75)"
-                              >
-                                <HStack justify="space-between">
-                                  <Text fontWeight={700} color="#2A1A14">
-                                    {index + 1}. {entry.ingredientName}
-                                  </Text>
-                                  <Text fontWeight={900} color="#8D1C13">
-                                    {formatQuantity(entry.usedQuantity, 2)} {entry.unit}
-                                  </Text>
-                                </HStack>
-                              </Box>
-                            ))
-                          ) : (
-                            <EmptyState
-                              title="No usage data"
-                              description="Once invoices are billed, top ingredient usage will appear here."
-                            />
-                          )}
-                        </VStack>
-                      </Box>
-                    </SimpleGrid>
-                  </VStack>
+                  <SimpleGrid columns={{ base: 1, sm: 2, xl: 5 }} spacing={3}>
+                    <AppCard title="Total Ingredients">
+                      <Text fontSize="3xl" fontWeight={900}>
+                        {stockInsights.totals.totalIngredients}
+                      </Text>
+                    </AppCard>
+                    <AppCard title="Healthy Stock">
+                      <Text fontSize="3xl" fontWeight={900} color="green.700">
+                        {stockInsights.totals.healthyStockIngredients}
+                      </Text>
+                    </AppCard>
+                    <AppCard title="Low Stock Alerts">
+                      <Text fontSize="3xl" fontWeight={900} color="red.700">
+                        {stockInsights.totals.lowStockIngredients}
+                      </Text>
+                    </AppCard>
+                    <AppCard title="Staff Usage">
+                      <Text fontSize="3xl" fontWeight={900}>
+                        {stockInsights.insights.staffUsageSummary.length}
+                      </Text>
+                      <Text fontSize="sm" color="#705B52">
+                        active contributors
+                      </Text>
+                    </AppCard>
+                    <AppCard title="Most Used Ingredient">
+                      <Text fontSize="lg" fontWeight={900}>
+                        {stockInsights.insights.mostUsedIngredient?.ingredientName ?? "-"}
+                      </Text>
+                      <Text fontSize="sm" color="#705B52">
+                        {stockInsights.insights.mostUsedIngredient
+                          ? formatQuantityWithUnit(
+                              stockInsights.insights.mostUsedIngredient.usedQuantity,
+                              stockInsights.insights.mostUsedIngredient.unit
+                            )
+                          : "No usage"}
+                      </Text>
+                    </AppCard>
+                  </SimpleGrid>
                 )}
 
-                <Box
-                  p={4}
-                  borderRadius="16px"
-                  border="1px solid"
-                  borderColor="rgba(132, 79, 52, 0.2)"
-                  bg="white"
-                >
-                  <Text fontWeight={800} color="#2A1A14" mb={3}>
-                    Allocation Summary
-                  </Text>
-                  {statsLoading ? (
-                    <SkeletonTable />
-                  ) : (
-                    <DataTable
-                      columns={statsTableColumns}
-                      rows={statsRows.map((row) => ({ ...row, id: row.ingredientId }))}
-                      emptyState={
-                        <EmptyState
-                          title="No allocation stats found"
-                          description="Try a different search or category filter."
-                        />
-                      }
-                    />
-                  )}
-                  <PaginationControls
-                    page={statsPagination.page}
-                    totalPages={statsPagination.totalPages}
-                    total={statsPagination.total}
-                    showing={statsRows.length}
-                    onPageChange={setStatsPage}
+                {statsLoading ? (
+                  <SkeletonTable />
+                ) : (
+                  <DataTable
+                    columns={statsColumns}
+                    rows={statsRows}
+                    emptyState={
+                      <EmptyState
+                        title="No stock stats found"
+                        description="Try a different search or category filter."
+                      />
+                    }
                   />
-                </Box>
+                )}
 
-                <Box
-                  p={4}
-                  borderRadius="16px"
-                  border="1px solid"
-                  borderColor="rgba(132, 79, 52, 0.2)"
-                  bg="white"
-                >
-                  <Text fontWeight={800} color="#2A1A14" mb={3}>
-                    Staff Usage
-                  </Text>
-                  {allocationStatsLoading || !allocationStats ? (
-                    <SkeletonTable />
-                  ) : (
-                    <DataTable
-                      columns={staffUsageColumns}
-                      rows={staffUsageRows}
-                      emptyState={
-                        <EmptyState
-                          title="No staff usage found"
-                          description="Once staff creates paid invoices, consumption will appear here."
-                        />
-                      }
-                    />
-                  )}
-                </Box>
+                <PaginationControls
+                  page={statsPagination.page}
+                  totalPages={statsPagination.totalPages}
+                  total={statsPagination.total}
+                  showing={statsRows.length}
+                  onPageChange={setStatsPage}
+                />
               </VStack>
             </AppCard>
           </TabPanel>
@@ -1491,107 +908,6 @@ export const IngredientEntryPage = () => {
               </VStack>
             </AppCard>
           </TabPanel>
-
-          <TabPanel px={0}>
-            <AppCard>
-              <VStack spacing={4} align="stretch">
-                <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
-                  <AppInput
-                    label="Date"
-                    type="date"
-                    value={allocationDate}
-                    onChange={(event) => setAllocationDate((event.target as HTMLInputElement).value)}
-                  />
-                  <AppInput
-                    label="Search Ingredient"
-                    placeholder="Search by ingredient"
-                    value={allocationSearch}
-                    onChange={(event) => setAllocationSearch((event.target as HTMLInputElement).value)}
-                  />
-                  <FormControl>
-                    <FormLabel>Category</FormLabel>
-                    <Select
-                      value={allocationCategoryFilter}
-                      onChange={(event) => setAllocationCategoryFilter(event.target.value)}
-                    >
-                      <option value="">All Categories</option>
-                      {categoryOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel>Records per page</FormLabel>
-                    <Select
-                      value={String(allocationLimit)}
-                      onChange={(event) => {
-                        const nextLimit = Number(event.target.value) || 5;
-                        setAllocationLimit(nextLimit);
-                        setAllocationPage(1);
-                      }}
-                    >
-                      <option value="5">5</option>
-                      <option value="10">10</option>
-                      <option value="20">20</option>
-                    </Select>
-                  </FormControl>
-                </SimpleGrid>
-
-                <HStack justify="space-between" flexWrap="wrap" gap={3}>
-                  <Text color="#6F5A50" fontSize="sm">
-                    Staff can continue billing while allocated stock balance is available. Allocate stock when balance is low.
-                    {posBillingControl
-                      ? ` POS billing is currently ${posBillingControl.isBillingEnabled ? "enabled" : "paused"}.`
-                      : ""}
-                  </Text>
-                  <HStack>
-                    <AppButton
-                      onClick={() => void handleSaveAllocationChanges()}
-                      isLoading={allocationSaveLoading}
-                      isDisabled={!dirtyAllocationRows.length || allocationLoading || bulkActionLoading}
-                    >
-                      Save Selected Allocations ({dirtyAllocationRows.length})
-                    </AppButton>
-                    <AppButton
-                      variant={posBillingControl?.isBillingEnabled ? "outline" : "solid"}
-                      onClick={posControlDialog.onOpen}
-                      isLoading={posControlLoading}
-                    >
-                      {posBillingControl?.isBillingEnabled ? "Pause POS Billing" : "Resume POS Billing"}
-                    </AppButton>
-                    <AppButton onClick={assignAllDialog.onOpen} isLoading={bulkActionLoading}>
-                      Allocate All Available Stock
-                    </AppButton>
-                  </HStack>
-                </HStack>
-
-                {allocationLoading ? (
-                  <SkeletonTable />
-                ) : (
-                  <DataTable
-                    columns={allocationColumns}
-                    rows={allocationRows.map((row) => ({ ...row, id: row.ingredientId }))}
-                    emptyState={
-                      <EmptyState
-                        title="No allocation data found"
-                        description="Create ingredients first, then allocate stock for billing."
-                      />
-                    }
-                  />
-                )}
-
-                <PaginationControls
-                  page={allocationPagination.page}
-                  totalPages={allocationPagination.totalPages}
-                  total={allocationPagination.total}
-                  showing={allocationRows.length}
-                  onPageChange={setAllocationPage}
-                />
-              </VStack>
-            </AppCard>
-          </TabPanel>
         </TabPanels>
       </Tabs>
 
@@ -1646,28 +962,6 @@ export const IngredientEntryPage = () => {
         description={`Are you sure you want to permanently delete ${selectedIngredient?.name ?? "this ingredient"}?`}
         onConfirm={() => void handleDeleteIngredient()}
         isLoading={ingredientMutationLoading}
-      />
-
-      <ConfirmDialog
-        isOpen={assignAllDialog.isOpen}
-        onClose={assignAllDialog.onClose}
-        title="Allocate All Available Stock"
-        description={`This will allocate all current stock to ${allocationDate}. This action moves stock from central balance to today's allocation. Continue?`}
-        onConfirm={() => void handleAssignAllStock()}
-        isLoading={bulkActionLoading}
-      />
-
-      <ConfirmDialog
-        isOpen={posControlDialog.isOpen}
-        onClose={posControlDialog.onClose}
-        title={posBillingControl?.isBillingEnabled ? "Pause POS Billing" : "Resume POS Billing"}
-        description={
-          posBillingControl?.isBillingEnabled
-            ? "This will immediately block staff from taking new orders in POS. Existing orders can still be reviewed."
-            : "This will allow staff to take new POS orders again."
-        }
-        onConfirm={() => void handleTogglePosBillingControl()}
-        isLoading={posControlLoading}
       />
     </VStack>
   );

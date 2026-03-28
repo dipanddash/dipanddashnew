@@ -33,6 +33,7 @@ import { useStaffManagement } from "@/features/staff/hooks/useStaffManagement";
 import { reportsService } from "@/services/reports.service";
 import type { Staff } from "@/types/staff";
 import type { UserRole } from "@/types/role";
+import { STAFF_ASSIGNABLE_MODULE_OPTIONS } from "@/constants/modules";
 import { useAppToast } from "@/hooks/useAppToast";
 import { extractErrorMessage } from "@/utils/api-error";
 import type { AppSelectOption } from "@/components/ui/select";
@@ -130,6 +131,7 @@ export const StaffManagementPage = () => {
       role: UserRole;
       password?: string;
       assignedReports?: string[];
+      assignedModules?: string[];
     }) => {
       try {
         if (selected) {
@@ -137,7 +139,8 @@ export const StaffManagementPage = () => {
             fullName: values.fullName,
             email: values.email,
             role: values.role,
-            assignedReports: values.assignedReports
+            assignedReports: values.assignedReports,
+            assignedModules: values.assignedModules
           });
           toast.success(message ?? "Staff member updated successfully");
         } else {
@@ -147,7 +150,8 @@ export const StaffManagementPage = () => {
             email: values.email,
             password: values.password ?? "",
             role: values.role,
-            assignedReports: values.assignedReports
+            assignedReports: values.assignedReports,
+            assignedModules: values.assignedModules
           });
           toast.success(message ?? "Staff member created successfully");
         }
@@ -256,6 +260,15 @@ export const StaffManagementPage = () => {
         )
       },
       {
+        key: "modules",
+        header: "Modules Access",
+        render: (row: Staff) => (
+          <Text fontWeight={600} color={row.assignedModules.length ? "#2D1D17" : "#705B52"}>
+            {row.assignedModules.length ? `${row.assignedModules.length} assigned` : "No module access"}
+          </Text>
+        )
+      },
+      {
         key: "status",
         header: "Status",
         render: (row: Staff) => <StatusBadge active={row.isActive} />
@@ -353,6 +366,7 @@ export const StaffManagementPage = () => {
         onSubmit={submitStaff}
         loading={mutationLoading}
         reportOptions={reportOptions}
+        moduleOptions={STAFF_ASSIGNABLE_MODULE_OPTIONS}
       />
 
       <ConfirmDialog

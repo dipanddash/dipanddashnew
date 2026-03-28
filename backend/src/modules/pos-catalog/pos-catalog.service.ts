@@ -3,6 +3,7 @@ import { MoreThan, MoreThanOrEqual } from "typeorm";
 import { AppDataSource } from "../../database/data-source";
 import { DailyAllocation } from "../ingredients/daily-allocation.entity";
 import { Ingredient } from "../ingredients/ingredient.entity";
+import { IngredientStock } from "../ingredients/ingredient-stock.entity";
 import { PosBillingControl } from "../ingredients/pos-billing-control.entity";
 import { ItemCategory } from "../items/item-category.entity";
 import { ItemIngredient } from "../items/item-ingredient.entity";
@@ -33,17 +34,19 @@ export class PosCatalogService {
   private readonly comboItemRepository = AppDataSource.getRepository(ComboItem);
   private readonly couponRepository = AppDataSource.getRepository(Coupon);
   private readonly ingredientRepository = AppDataSource.getRepository(Ingredient);
+  private readonly ingredientStockRepository = AppDataSource.getRepository(IngredientStock);
   private readonly dailyAllocationRepository = AppDataSource.getRepository(DailyAllocation);
   private readonly posBillingControlRepository = AppDataSource.getRepository(PosBillingControl);
   private readonly productRepository = AppDataSource.getRepository(Product);
 
   private async getLatestVersion() {
-    const [item, addOn, combo, coupon, ingredient, allocation, control, product] = await Promise.all([
+    const [item, addOn, combo, coupon, ingredient, stock, allocation, control, product] = await Promise.all([
       this.itemRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.addOnRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.comboRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.couponRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.ingredientRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
+      this.ingredientStockRepository.findOne({ where: {}, order: { lastUpdatedAt: "DESC" } }),
       this.dailyAllocationRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.posBillingControlRepository.findOne({ where: {}, order: { updatedAt: "DESC" } }),
       this.productRepository.findOne({ where: {}, order: { updatedAt: "DESC" } })
@@ -55,6 +58,7 @@ export class PosCatalogService {
       combo?.updatedAt,
       coupon?.updatedAt,
       ingredient?.updatedAt,
+      stock?.lastUpdatedAt,
       allocation?.updatedAt,
       control?.updatedAt,
       product?.updatedAt
@@ -67,7 +71,7 @@ export class PosCatalogService {
     const sinceDate = input?.sinceVersion ? new Date(input.sinceVersion) : null;
     const whereUpdatedSince = sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
 
-    const [categories, items, itemIngredients, addOns, addOnIngredients, combos, comboItems, coupons, allocationRows, control, products] =
+    const [categories, items, itemIngredients, addOns, addOnIngredients, combos, comboItems, coupons, allocationRows, control, products, activeIngredients, stockRows] =
       await Promise.all([
         this.itemCategoryRepository.find({
           where: whereUpdatedSince ? { updatedAt: MoreThanOrEqual(whereUpdatedSince) } : {},
@@ -113,6 +117,14 @@ export class PosCatalogService {
         this.productRepository.find({
           where: { isActive: true },
           order: { name: "ASC" }
+        }),
+        this.ingredientRepository.find({
+          where: { isActive: true },
+          order: { name: "ASC" }
+        }),
+        this.ingredientStockRepository.find({
+          where: {},
+          order: { lastUpdatedAt: "DESC" }
         })
       ]);
 
@@ -168,6 +180,21 @@ export class PosCatalogService {
     const allocations = [...allocationPoolMap.values()].sort((left, right) =>
       left.ingredientName.localeCompare(right.ingredientName)
     );
+
+    const stockByIngredientId = new Map(stockRows.map((stock) => [stock.ingredientId, stock]));
+    const ingredientStocks = activeIngredients
+      .map((ingredient) => {
+        const stock = stockByIngredientId.get(ingredient.id);
+        const availableQuantity = Number(Number(stock?.totalStock ?? 0).toFixed(6));
+        return {
+          ingredientId: ingredient.id,
+          ingredientName: ingredient.name,
+          ingredientUnit: ingredient.unit,
+          availableQuantity,
+          updatedAt: (stock?.lastUpdatedAt ?? ingredient.updatedAt).toISOString()
+        };
+      })
+      .sort((left, right) => left.ingredientName.localeCompare(right.ingredientName));
 
     return {
       version,
@@ -267,10 +294,11 @@ export class PosCatalogService {
         isActive: coupon.isActive,
         updatedAt: coupon.updatedAt
       })),
+      ingredientStocks,
       allocations,
       controls: {
         isBillingEnabled: control?.isBillingEnabled ?? true,
-        enforceDailyAllocation: control?.enforceDailyAllocation ?? true,
+        enforceDailyAllocation: false,
         reason: control?.reason ?? null,
         updatedAt: control?.updatedAt?.toISOString?.() ?? null
       }

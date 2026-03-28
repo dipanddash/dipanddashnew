@@ -58,7 +58,9 @@ export const authenticate = async (req: Request, _res: Response, next: NextFunct
     id: user.id,
     username: user.username,
     fullName: user.fullName,
-    role: user.role
+    role: user.role,
+    assignedReports: user.assignedReports ?? [],
+    assignedModules: user.assignedModules ?? []
   };
 
   return next();

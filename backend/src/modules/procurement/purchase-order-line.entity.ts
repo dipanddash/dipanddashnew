@@ -59,6 +59,12 @@ export class PurchaseOrderLine {
   @Column({ type: "numeric", precision: 12, scale: 3 })
   stockAdded!: number;
 
+  @Column({ type: "numeric", precision: 12, scale: 3, nullable: true })
+  enteredQuantity!: number | null;
+
+  @Column({ type: "varchar", length: 30, nullable: true })
+  enteredUnit!: string | null;
+
   @Column({ type: "numeric", precision: 12, scale: 3, default: 0 })
   stockAfter!: number;
 

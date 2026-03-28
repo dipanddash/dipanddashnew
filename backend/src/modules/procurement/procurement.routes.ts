@@ -1,8 +1,8 @@
 import { Router } from "express";
 
-import { UserRole } from "../../constants/roles";
 import { asyncHandler } from "../../middlewares/async-handler";
-import { authenticate, authorizeRoles } from "../../middlewares/auth.middleware";
+import { authenticate } from "../../middlewares/auth.middleware";
+import { authorizeModuleAccess } from "../../middlewares/module-access.middleware";
 import { validateRequest } from "../../middlewares/validate.middleware";
 import { ProcurementController } from "./procurement.controller";
 import { purchaseInvoiceImageUpload } from "./procurement-upload.middleware";
@@ -28,7 +28,7 @@ const router = Router();
 const procurementController = new ProcurementController();
 
 router.use(authenticate);
-router.use(authorizeRoles(UserRole.ADMIN));
+router.use(authorizeModuleAccess("purchase"));
 
 router.get("/units", validateRequest(procurementUnitsSchema), asyncHandler(procurementController.getUnits));
 router.get("/meta", validateRequest(procurementMetaSchema), asyncHandler(procurementController.getMeta));

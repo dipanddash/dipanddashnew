@@ -136,10 +136,12 @@ const recomputeOrder = (order: PosOrder) => {
   } satisfies PosOrder;
 };
 
-const applyUsageToAllocationSnapshot = (
+const applyUsageToCatalogSnapshot = (
   snapshot: CatalogSnapshot,
   usageEvents: Array<{ ingredientId: string | null; consumedQuantity: number }>
 ) => {
+  const stockMap = new Map((snapshot.ingredientStocks ?? []).map((stock) => [stock.ingredientId, stock]));
+  const nextIngredientStocks = [...(snapshot.ingredientStocks ?? [])];
   const allocationMap = new Map(snapshot.allocations.map((allocation) => [allocation.ingredientId, allocation]));
   const nextAllocations = [...snapshot.allocations];
 
@@ -148,12 +150,28 @@ const applyUsageToAllocationSnapshot = (
       continue;
     }
 
+    const consumed = Number(event.consumedQuantity.toFixed(6));
+
+    const existingStock = stockMap.get(event.ingredientId);
+    if (existingStock) {
+      const nextAvailable = Number(Math.max(existingStock.availableQuantity - consumed, 0).toFixed(6));
+      const nextStock = {
+        ...existingStock,
+        availableQuantity: nextAvailable,
+        updatedAt: new Date().toISOString()
+      };
+      stockMap.set(event.ingredientId, nextStock);
+      const stockIdx = nextIngredientStocks.findIndex((row) => row.ingredientId === event.ingredientId);
+      if (stockIdx >= 0) {
+        nextIngredientStocks[stockIdx] = nextStock;
+      }
+    }
+
     const existing = allocationMap.get(event.ingredientId);
     if (!existing) {
       continue;
     }
 
-    const consumed = Number(event.consumedQuantity.toFixed(6));
     const nextUsed = Number((existing.usedQuantity + consumed).toFixed(6));
     const nextRemaining = Number(Math.max(existing.remainingQuantity - consumed, 0).toFixed(6));
 
@@ -173,6 +191,7 @@ const applyUsageToAllocationSnapshot = (
 
   return {
     ...snapshot,
+    ingredientStocks: nextIngredientStocks,
     allocations: nextAllocations
   };
 };
@@ -302,22 +321,6 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         };
       }
 
-      const shouldEnforceDailyAllocation = catalog.controls?.enforceDailyAllocation ?? true;
-      if (!shouldEnforceDailyAllocation) {
-        return {
-          ok: true as const
-        };
-      }
-
-      const activeAllocations = catalog.allocations.filter((allocation) => allocation.remainingQuantity > 0);
-      if (!activeAllocations.length) {
-        return {
-          ok: false as const,
-          message:
-            "No ingredient stock is allocated for today. Please contact admin to allocate stock before billing."
-        };
-      }
-
       const usageEvents = posBillingService.buildUsageEvents(
         {
           ...createDraftOrder(),
@@ -333,11 +336,20 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         };
       }
 
-      const allocationByIngredient = new Map(
-        activeAllocations.map((allocation) => [allocation.ingredientId, allocation])
+      const stockByIngredient = new Map(
+        (catalog.ingredientStocks ?? []).map((stock) => [stock.ingredientId, stock.availableQuantity])
+      );
+      const allocationFallback = new Map(
+        catalog.allocations.map((allocation) => [allocation.ingredientId, allocation.remainingQuantity])
       );
 
-      const missingIngredients = new Set<string>();
+      if (!stockByIngredient.size && !allocationFallback.size) {
+        return {
+          ok: true as const
+        };
+      }
+
+      const zeroStockIngredients = new Set<string>();
       const insufficientIngredients: string[] = [];
 
       for (const usage of usageEvents) {
@@ -346,32 +358,33 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
           continue;
         }
 
-        const allocation = allocationByIngredient.get(ingredientId);
-        if (!allocation || allocation.remainingQuantity <= 0) {
-          missingIngredients.add(usage.ingredientNameSnapshot);
+        const availableQuantity =
+          Number(stockByIngredient.get(ingredientId) ?? allocationFallback.get(ingredientId) ?? 0);
+        if (availableQuantity <= 0) {
+          zeroStockIngredients.add(usage.ingredientNameSnapshot);
           continue;
         }
 
-        if (usage.consumedQuantity > allocation.remainingQuantity + 0.000001) {
+        if (usage.consumedQuantity > availableQuantity + 0.000001) {
           insufficientIngredients.push(
-            `${usage.ingredientNameSnapshot} (required ${formatQuantityWithUnit(usage.consumedQuantity, usage.baseUnit)}, available ${formatQuantityWithUnit(allocation.remainingQuantity, usage.baseUnit)})`
+            `${usage.ingredientNameSnapshot} (required ${formatQuantityWithUnit(usage.consumedQuantity, usage.baseUnit)}, available ${formatQuantityWithUnit(availableQuantity, usage.baseUnit)})`
           );
         }
       }
 
-      if (missingIngredients.size || insufficientIngredients.length) {
+      if (zeroStockIngredients.size || insufficientIngredients.length) {
         const chunks: string[] = [];
-        if (missingIngredients.size) {
+        if (zeroStockIngredients.size) {
           chunks.push(
-            `No admin allocation for: ${[...missingIngredients].join(", ")}`
+            `Out of stock: ${[...zeroStockIngredients].join(", ")}`
           );
         }
         if (insufficientIngredients.length) {
-          chunks.push(`Allocated stock exhausted: ${insufficientIngredients.join(", ")}`);
+          chunks.push(`Insufficient stock: ${insufficientIngredients.join(", ")}`);
         }
         return {
           ok: false as const,
-          message: `${chunks.join(". ")}. Please contact admin to allocate or refill stock.`
+          message: `${chunks.join(". ")}. Please refill stock and try again.`
         };
       }
 
@@ -967,7 +980,7 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
         updatedAt: now
       };
       await syncQueueRepository.enqueue(queueRow);
-      setCatalog((previous) => (previous ? applyUsageToAllocationSnapshot(previous, usageEvents) : previous));
+      setCatalog((previous) => (previous ? applyUsageToCatalogSnapshot(previous, usageEvents) : previous));
       await refreshPendingBills();
       await refreshRecentBills();
       await refreshCompletedBills();

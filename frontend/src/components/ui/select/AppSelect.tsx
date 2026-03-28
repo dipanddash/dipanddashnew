@@ -82,7 +82,7 @@ function AppSelectComponent<Option extends AppSelectOption = AppSelectOption>({
   );
 
   const portalTarget = useMemo(
-    () => menuPortalTarget ?? (typeof document !== "undefined" ? document.body : null),
+    () => (menuPortalTarget === undefined ? (typeof document !== "undefined" ? document.body : null) : menuPortalTarget),
     [menuPortalTarget]
   );
 
@@ -130,4 +130,3 @@ function AppSelectComponent<Option extends AppSelectOption = AppSelectOption>({
 }
 
 export const AppSelect = memo(AppSelectComponent) as typeof AppSelectComponent;
-

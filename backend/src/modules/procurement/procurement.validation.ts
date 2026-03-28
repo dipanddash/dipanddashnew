@@ -86,6 +86,7 @@ const purchaseLineSchema = z
     ingredientId: z.string().uuid("Invalid ingredient id").optional(),
     productId: z.string().uuid("Invalid product id").optional(),
     quantity: z.coerce.number().positive("Quantity must be greater than zero"),
+    quantityUnit: z.string().trim().optional(),
     unitPrice: z.coerce.number().min(0, "Unit price cannot be negative"),
     updateUnitPrice: z.boolean().optional(),
     note: z.string().trim().max(255).optional()
@@ -106,6 +107,13 @@ const purchaseLineSchema = z
           path: ["productId"]
         });
       }
+      if (value.quantityUnit && !INGREDIENT_UNITS.includes(value.quantityUnit as any)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Invalid unit for ingredient line",
+          path: ["quantityUnit"]
+        });
+      }
     }
 
     if (value.lineType === "product") {
@@ -121,6 +129,13 @@ const purchaseLineSchema = z
           code: z.ZodIssueCode.custom,
           message: "ingredientId is not allowed for product line",
           path: ["ingredientId"]
+        });
+      }
+      if (value.quantityUnit && !PRODUCT_UNITS.includes(value.quantityUnit as any)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Invalid unit for product line",
+          path: ["quantityUnit"]
         });
       }
     }

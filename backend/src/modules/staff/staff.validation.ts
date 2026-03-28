@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { UserRole } from "../../constants/roles";
 import { REPORT_KEYS } from "../reports/reports.constants";
+import { STAFF_ASSIGNABLE_MODULE_KEYS } from "../users/user-access.constants";
 
 const restrictedRoleSchema = z
   .nativeEnum(UserRole)
@@ -30,7 +31,8 @@ export const createStaffSchema = z.object({
       .optional()
       .or(z.literal("")),
     role: restrictedRoleSchema,
-    assignedReports: z.array(z.enum(REPORT_KEYS)).optional().default([])
+    assignedReports: z.array(z.enum(REPORT_KEYS)).optional().default([]),
+    assignedModules: z.array(z.enum(STAFF_ASSIGNABLE_MODULE_KEYS)).optional().default([])
   })
 });
 
@@ -53,7 +55,8 @@ export const updateStaffSchema = z.object({
         .optional()
         .or(z.literal("")),
       role: restrictedRoleSchema.optional(),
-      assignedReports: z.array(z.enum(REPORT_KEYS)).optional()
+      assignedReports: z.array(z.enum(REPORT_KEYS)).optional(),
+      assignedModules: z.array(z.enum(STAFF_ASSIGNABLE_MODULE_KEYS)).optional()
     })
     .refine((value) => Object.keys(value).length > 0, "At least one field must be provided")
 });

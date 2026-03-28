@@ -8,12 +8,9 @@ import { IngredientsController } from "./ingredients.controller";
 import {
   addIngredientStockSchema,
   adjustIngredientStockSchema,
-  allocationListSchema,
   allocationStatsSchema,
-  assignAllAllocationSchema,
   closingReportListSchema,
   closingStatusSchema,
-  continueYesterdayAllocationSchema,
   createIngredientCategorySchema,
   createIngredientSchema,
   deleteIngredientCategorySchema,
@@ -21,11 +18,9 @@ import {
   ingredientCategoryListSchema,
   ingredientListSchema,
   ingredientStockSchema,
-  saveAllocationSchema,
   stockAuditSchema,
   submitClosingReportSchema,
   updatePosBillingControlSchema,
-  updateAllocationSchema,
   updateIngredientCategorySchema,
   updateIngredientSchema
 } from "./ingredients.validation";
@@ -86,27 +81,10 @@ router.post("/", validateRequest(createIngredientSchema), asyncHandler(ingredien
 router.patch("/:id", validateRequest(updateIngredientSchema), asyncHandler(ingredientsController.updateIngredient));
 router.delete("/:id", validateRequest(deleteIngredientSchema), asyncHandler(ingredientsController.deleteIngredient));
 
-router.get("/allocations", validateRequest(allocationListSchema), asyncHandler(ingredientsController.getAllocations));
 router.get(
   "/allocations/stats",
   validateRequest(allocationStatsSchema),
   asyncHandler(ingredientsController.getAllocationStats)
-);
-router.post(
-  "/allocations/assign-all",
-  validateRequest(assignAllAllocationSchema),
-  asyncHandler(ingredientsController.assignAllStockToDate)
-);
-router.post(
-  "/allocations/continue-yesterday",
-  validateRequest(continueYesterdayAllocationSchema),
-  asyncHandler(ingredientsController.continueYesterdayAllocation)
-);
-router.post("/allocations", validateRequest(saveAllocationSchema), asyncHandler(ingredientsController.saveAllocation));
-router.patch(
-  "/allocations/:id",
-  validateRequest(updateAllocationSchema),
-  asyncHandler(ingredientsController.updateAllocation)
 );
 
 router.get("/:id/stock", validateRequest(ingredientStockSchema), asyncHandler(ingredientsController.getIngredientStock));

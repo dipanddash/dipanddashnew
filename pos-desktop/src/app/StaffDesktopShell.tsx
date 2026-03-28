@@ -21,6 +21,7 @@ import {
   FiClipboard,
   FiClock,
   FiCoffee,
+  FiFileText,
   FiGrid,
   FiHome,
   FiDollarSign,
@@ -53,6 +54,7 @@ import { StaffCashAuditPage } from "@/app/StaffCashAuditPage";
 import { StaffReportsPage } from "@/app/StaffReportsPage";
 import { StaffDumpPage } from "@/app/StaffDumpPage";
 import { StaffOutletTransferPage } from "@/app/StaffOutletTransferPage";
+import { StaffPurchasePage } from "@/app/StaffPurchasePage";
 import { PosTopBar } from "@/components/layout/PosTopBar";
 import { ShortcutHelpModal } from "@/components/pos/ShortcutHelpModal";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -72,6 +74,7 @@ type StaffViewKey =
   | "cash-audit"
   | "dump"
   | "outlet-transfer"
+  | "purchase"
   | "reports"
   | "profile"
   | "gaming-booking";
@@ -106,6 +109,7 @@ const MAIN_MENUS: StaffMenuConfig[] = [
   { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign },
   { key: "dump", label: "Dump", icon: FiTrash2 },
   { key: "outlet-transfer", label: "Outlet Transfer", icon: FiRepeat },
+  { key: "purchase", label: "Purchase", icon: FiFileText },
   { key: "reports", label: "Reports", icon: FiBarChart2 },
   { key: "profile", label: "Profile", icon: FiUser }
 ];
@@ -116,7 +120,8 @@ const SNOOKER_STAFF_MENUS: StaffMenuConfig[] = [
   { key: "attendance", label: "Attendance", icon: FiClock },
   { key: "gaming-booking", label: "New Booking", icon: FiPlusSquare },
   { key: "cash-audit", label: "Cash Audit", icon: FiDollarSign },
-  { key: "outlet-transfer", label: "Outlet Transfer", icon: FiRepeat }
+  { key: "outlet-transfer", label: "Outlet Transfer", icon: FiRepeat },
+  { key: "purchase", label: "Purchase", icon: FiFileText }
 ];
 
 const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>([
@@ -125,7 +130,8 @@ const SNOOKER_ALLOWED_VIEWS = new Set<StaffViewKey>([
   "attendance",
   "gaming-booking",
   "cash-audit",
-  "outlet-transfer"
+  "outlet-transfer",
+  "purchase"
 ]);
 
 const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
@@ -181,6 +187,10 @@ const PAGE_TITLES: Record<StaffViewKey, { title: string; subtitle: string }> = {
     title: "Outlet Transfer",
     subtitle: "Move stock between outlets with source and destination updates."
   },
+  purchase: {
+    title: "Purchase",
+    subtitle: "Create and manage supplier purchases with line-wise stock updates."
+  },
   reports: {
     title: "Reports",
     subtitle: "View assigned report templates with date filters and export."
@@ -202,6 +212,8 @@ export const StaffDesktopShell = () => {
   const isOnline = useNetworkStatus();
   const shortcutsModal = useDisclosure();
   const [isCompactViewport] = useMediaQuery("(max-width: 1360px)");
+  const [isSmallDesktopViewport] = useMediaQuery("(max-width: 1440px)");
+  const [isNarrowDesktopViewport] = useMediaQuery("(max-width: 1600px)");
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isNewOrderExpanded, setIsNewOrderExpanded] = useState(true);
@@ -209,7 +221,15 @@ export const StaffDesktopShell = () => {
     session?.role === "snooker_staff" ? "dashboard" : "new-order/take-away"
   );
   const isSnookerStaff = session?.role === "snooker_staff";
-  const isSidebarCollapsedResolved = isSidebarCollapsed || isCompactViewport;
+  const canAccessPurchase =
+    session?.role === "admin" || (session?.assignedModules ?? []).includes("purchase");
+  const isSidebarCollapsedResolved = isSidebarCollapsed;
+  const expandedSidebarWidth = isSmallDesktopViewport
+    ? "236px"
+    : isNarrowDesktopViewport
+      ? "252px"
+      : SIDEBAR_EXPANDED_WIDTH;
+  const shouldUseCompactTopBar = isCompactViewport || (!isSidebarCollapsedResolved && isNarrowDesktopViewport);
 
   useEffect(() => {
     if (isCompactViewport) {
@@ -228,9 +248,18 @@ export const StaffDesktopShell = () => {
     if (activeView === "gaming-booking") {
       setActiveView("new-order/take-away");
     }
-  }, [activeView, isSnookerStaff]);
+    if (activeView === "purchase" && !canAccessPurchase) {
+      setActiveView("dashboard");
+    }
+  }, [activeView, canAccessPurchase, isSnookerStaff]);
 
-  const visibleMenus = isSnookerStaff ? SNOOKER_STAFF_MENUS : MAIN_MENUS;
+  const visibleMenus = useMemo(() => {
+    const menus = isSnookerStaff ? SNOOKER_STAFF_MENUS : MAIN_MENUS;
+    if (canAccessPurchase) {
+      return menus;
+    }
+    return menus.filter((menu) => !("key" in menu && menu.key === "purchase"));
+  }, [canAccessPurchase, isSnookerStaff]);
   const titleMeta =
     isSnookerStaff && activeView === "dashboard"
       ? {
@@ -289,6 +318,8 @@ export const StaffDesktopShell = () => {
         return <StaffOutletTransferPage />;
       case "reports":
         return <StaffReportsPage />;
+      case "purchase":
+        return <StaffPurchasePage />;
       default:
         return (
           <StaffPlaceholderPage
@@ -303,14 +334,14 @@ export const StaffDesktopShell = () => {
     <Box h="100vh" overflow="hidden" bg="linear-gradient(160deg, #FFF6E6 0%, #FFFDF9 48%, #FFFFFF 100%)">
       <HStack align="stretch" spacing={0} h="100%" w="100%" minW={0}>
         <Box
-          w={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
-          minW={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}
+          w={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth}
+          minW={isSidebarCollapsedResolved ? SIDEBAR_COLLAPSED_WIDTH : expandedSidebarWidth}
           h="100%"
           transition="width 0.22s ease"
           bg="linear-gradient(180deg, #FFFDF7 0%, #FFF8ED 100%)"
           borderRight="1px solid rgba(145, 87, 61, 0.15)"
-          p={isSidebarCollapsedResolved ? 3 : 5}
-          pr={isSidebarCollapsedResolved ? 2.5 : 4}
+          p={isSidebarCollapsedResolved ? 3 : isSmallDesktopViewport ? 4 : 5}
+          pr={isSidebarCollapsedResolved ? 2.5 : isSmallDesktopViewport ? 3.5 : 4}
           overflowY="auto"
           overflowX="hidden"
           boxShadow="4px 0 26px rgba(56, 21, 8, 0.05)"
@@ -319,21 +350,19 @@ export const StaffDesktopShell = () => {
             {isSidebarCollapsedResolved ? (
               <>
                 <Image src={logo} alt="Dip & Dash" h="42px" objectFit="contain" mx="auto" />
-                {!isCompactViewport ? (
-                  <HStack justify="center" mt={1} mb={1}>
-                    <ActionIconButton
-                      aria-label="Expand sidebar"
-                      icon={<FiChevronRight size={18} />}
-                      onClick={() => setIsSidebarCollapsed(false)}
-                      size="sm"
-                      variant="outline"
-                      borderColor="rgba(142, 9, 9, 0.22)"
-                      color="#7A2620"
-                      bg="rgba(255,255,255,0.9)"
-                      _hover={{ bg: "rgba(193, 14, 14, 0.08)" }}
-                    />
-                  </HStack>
-                ) : null}
+                <HStack justify="center" mt={1} mb={1}>
+                  <ActionIconButton
+                    aria-label="Expand sidebar"
+                    icon={<FiChevronRight size={18} />}
+                    onClick={() => setIsSidebarCollapsed(false)}
+                    size="sm"
+                    variant="outline"
+                    borderColor="rgba(142, 9, 9, 0.22)"
+                    color="#7A2620"
+                    bg="rgba(255,255,255,0.9)"
+                    _hover={{ bg: "rgba(193, 14, 14, 0.08)" }}
+                  />
+                </HStack>
               </>
             ) : (
               <HStack justify="space-between" align="center" mb={2}>
@@ -423,8 +452,8 @@ export const StaffDesktopShell = () => {
                     ) : (
                       groupButton
                     )}
-                    {!isSidebarCollapsedResolved && isNewOrderExpanded ? (
-                      <VStack align="stretch" pl={2} spacing={1.5}>
+                    {isNewOrderExpanded ? (
+                      <VStack align="stretch" pl={isSidebarCollapsedResolved ? 0 : 2} spacing={1.5}>
                         {NEW_ORDER_CHILDREN.map((child) => {
                           const ChildIcon = child.icon;
                           const isActive = activeView === child.key;
@@ -432,10 +461,10 @@ export const StaffDesktopShell = () => {
                             <Button
                               key={child.key}
                               variant="ghost"
-                              justifyContent="flex-start"
+                              justifyContent={isSidebarCollapsedResolved ? "center" : "flex-start"}
                               borderRadius="14px"
                               py={5.5}
-                              px={3}
+                              px={isSidebarCollapsedResolved ? 2 : 3}
                               minH="48px"
                               fontWeight={700}
                               color={isActive ? "white" : "#452E27"}
@@ -451,7 +480,7 @@ export const StaffDesktopShell = () => {
                               }}
                               onClick={() => setActiveView(child.key)}
                             >
-                              <Flex align="center" gap={3}>
+                              <Flex align="center" gap={isSidebarCollapsedResolved ? 0 : 3}>
                                 <Box
                                   minW="30px"
                                   h="30px"
@@ -463,12 +492,18 @@ export const StaffDesktopShell = () => {
                                 >
                                   <ChildIcon size={18} />
                                 </Box>
-                                <Text>{child.label}</Text>
+                                {!isSidebarCollapsedResolved ? <Text>{child.label}</Text> : null}
                               </Flex>
                             </Button>
                           );
                           return (
-                            childButton
+                            isSidebarCollapsedResolved ? (
+                              <Tooltip key={child.key} label={child.label} placement="right" hasArrow openDelay={180}>
+                                {childButton}
+                              </Tooltip>
+                            ) : (
+                              childButton
+                            )
                           );
                         })}
                       </VStack>
@@ -566,6 +601,7 @@ export const StaffDesktopShell = () => {
             lastSyncedAt={syncState.lastSyncedAt}
             title={titleMeta.title}
             subtitle={isOfflineSession ? "Offline session active. Some actions need internet to sync." : titleMeta.subtitle}
+            compactLayout={shouldUseCompactTopBar}
             onOpenShortcuts={shortcutsModal.onOpen}
             onSyncNow={() => {
               void syncState.syncNow();
@@ -578,7 +614,7 @@ export const StaffDesktopShell = () => {
               void logout();
             }}
           />
-          <Box flex={1} overflowY="auto" overflowX="hidden">
+          <Box flex={1} overflowY="auto" overflowX="auto">
             <Box p={{ base: 3, xl: 4 }} minW={0}>
               {content}
             </Box>

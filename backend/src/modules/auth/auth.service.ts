@@ -15,6 +15,8 @@ export type SessionUser = {
   email: string | null;
   role: UserRole;
   isActive: boolean;
+  assignedReports: string[];
+  assignedModules: string[];
 };
 
 export class AuthService {
@@ -49,7 +51,9 @@ export class AuthService {
       fullName: user.fullName,
       email: user.email,
       role: user.role,
-      isActive: user.isActive
+      isActive: user.isActive,
+      assignedReports: user.assignedReports ?? [],
+      assignedModules: user.assignedModules ?? []
     };
 
     const session = await this.sessionService.createPendingSession({
@@ -138,7 +142,9 @@ export class AuthService {
       fullName: user.fullName,
       email: user.email,
       role: user.role,
-      isActive: user.isActive
+      isActive: user.isActive,
+      assignedReports: user.assignedReports ?? [],
+      assignedModules: user.assignedModules ?? []
     };
 
     const nextRefreshToken = this.tokenService.createRefreshToken({
@@ -199,7 +205,9 @@ export class AuthService {
       fullName: user.fullName,
       email: user.email,
       role: user.role,
-      isActive: user.isActive
+      isActive: user.isActive,
+      assignedReports: user.assignedReports ?? [],
+      assignedModules: user.assignedModules ?? []
     };
   }
 }

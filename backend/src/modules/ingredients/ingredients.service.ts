@@ -65,6 +65,8 @@ const getPaginationMeta = (page: number, limit: number, total: number) => ({
 });
 
 const getStockStatus = (totalStock: number, minStock: number) => (totalStock <= minStock ? "LOW_STOCK" : "OK");
+const allocationDisabledMessage =
+  "Daily allocation flow is disabled. Staff usage now runs directly from available stock in hand.";
 
 const getTodayDateString = () => {
   const now = new Date();
@@ -88,6 +90,32 @@ const getDateOnlyString = (value: Date) => {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+};
+
+const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+
+const normalizeDateInput = (value: string | Date, label: string) => {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new AppError(422, `${label} must be in YYYY-MM-DD format.`);
+    }
+    return getDateOnlyString(value);
+  }
+
+  const trimmed = value.trim();
+  if (dateOnlyPattern.test(trimmed)) {
+    const parsed = new Date(`${trimmed}T00:00:00.000`);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new AppError(422, `${label} must be in YYYY-MM-DD format.`);
+    }
+    return trimmed;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new AppError(422, `${label} must be in YYYY-MM-DD format.`);
+  }
+  return getDateOnlyString(parsed);
 };
 
 const getStartOfDay = (date: Date) => {
@@ -1033,264 +1061,11 @@ export class IngredientsService {
   }
 
   async assignAllStockToDate(payload: { date: string; note?: string }) {
-    const targetDate = payload.date || getTodayDateString();
-    const ingredients = await this.ingredientRepository.find({
-      where: { isActive: true },
-      order: { name: "ASC" }
-    });
-
-    const ingredientIds = ingredients.map((ingredient) => ingredient.id);
-    if (!ingredientIds.length) {
-      return {
-        date: targetDate,
-        summary: {
-          allocatedCount: 0,
-          skippedCount: 0,
-          failedCount: 0
-        },
-        details: []
-      };
-    }
-
-    const [stocks, allocations] = await Promise.all([
-      this.stockRepository.find({
-        where: { ingredientId: In(ingredientIds) }
-      }),
-      this.allocationRepository.find({
-        where: { ingredientId: In(ingredientIds), date: targetDate }
-      })
-    ]);
-
-    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, stock]));
-    const allocationMap = new Map(allocations.map((allocation) => [allocation.ingredientId, allocation]));
-    const details: Array<{
-      ingredientId: string;
-      ingredientName: string;
-      allocatedQuantity: number;
-      status: "allocated" | "skipped";
-      message: string;
-    }> = [];
-
-    await AppDataSource.transaction(async (manager) => {
-      for (const ingredient of ingredients) {
-        const stock = stockMap.get(ingredient.id) ??
-          manager.create(IngredientStock, {
-            ingredientId: ingredient.id,
-            totalStock: 0,
-            lastUpdatedAt: new Date()
-          });
-        const availableStock = toFixedQuantity(getNumericValue(stock.totalStock));
-
-        if (availableStock <= 0) {
-          details.push({
-            ingredientId: ingredient.id,
-            ingredientName: ingredient.name,
-            allocatedQuantity: 0,
-            status: "skipped",
-            message: "No available stock to allocate"
-          });
-          continue;
-        }
-
-        const existing = allocationMap.get(ingredient.id);
-        if (existing) {
-          const used = toFixedQuantity(getNumericValue(existing.usedQuantity));
-          const nextAllocated = toFixedQuantity(getNumericValue(existing.allocatedQuantity) + availableStock);
-          existing.allocatedQuantity = nextAllocated;
-          existing.remainingQuantity = toFixedQuantity(Math.max(nextAllocated - used, 0));
-          await manager.save(DailyAllocation, existing);
-        } else {
-          const created = manager.create(DailyAllocation, {
-            ingredientId: ingredient.id,
-            date: targetDate,
-            allocatedQuantity: availableStock,
-            usedQuantity: 0,
-            remainingQuantity: availableStock
-          });
-          await manager.save(DailyAllocation, created);
-        }
-
-        stock.totalStock = 0;
-        stock.lastUpdatedAt = new Date();
-        await manager.save(IngredientStock, stock);
-
-        const log = manager.create(IngredientStockLog, {
-          ingredientId: ingredient.id,
-          type: IngredientStockLogType.ALLOCATE,
-          quantity: availableStock,
-          note: payload.note ?? "Allocated using assign all stock action."
-        });
-        await manager.save(IngredientStockLog, log);
-
-        details.push({
-          ingredientId: ingredient.id,
-          ingredientName: ingredient.name,
-          allocatedQuantity: availableStock,
-          status: "allocated",
-          message: "Allocated successfully"
-        });
-      }
-    });
-
-    const allocatedCount = details.filter((entry) => entry.status === "allocated").length;
-    const skippedCount = details.filter((entry) => entry.status === "skipped").length;
-
-    return {
-      date: targetDate,
-      summary: {
-        allocatedCount,
-        skippedCount,
-        failedCount: 0
-      },
-      details
-    };
+    throw new AppError(409, allocationDisabledMessage);
   }
 
   async continueYesterdayAllocation(payload: { date: string; note?: string }) {
-    const targetDate = payload.date || getTodayDateString();
-    const previousDate = getPreviousDateString(targetDate);
-
-    const previousAllocations = await this.allocationRepository.find({
-      where: { date: previousDate },
-      relations: { ingredient: true },
-      order: { updatedAt: "DESC" }
-    });
-
-    if (!previousAllocations.length) {
-      return {
-        date: targetDate,
-        previousDate,
-        summary: {
-          copiedCount: 0,
-          partialCount: 0,
-          skippedCount: 0
-        },
-        details: []
-      };
-    }
-
-    const ingredientIds = previousAllocations.map((allocation) => allocation.ingredientId);
-    const [todayAllocations] = await Promise.all([
-      this.allocationRepository.find({
-        where: { ingredientId: In(ingredientIds), date: targetDate }
-      })
-    ]);
-
-    const todayMap = new Map(todayAllocations.map((allocation) => [allocation.ingredientId, allocation]));
-    const details: Array<{
-      ingredientId: string;
-      ingredientName: string;
-      copiedQuantity: number;
-      requestedQuantity: number;
-      status: "copied" | "partial" | "skipped";
-      message: string;
-    }> = [];
-
-    await AppDataSource.transaction(async (manager) => {
-      for (const previous of previousAllocations) {
-        const requestedQuantity = toFixedQuantity(getNumericValue(previous.remainingQuantity));
-        if (requestedQuantity <= 0) {
-          details.push({
-            ingredientId: previous.ingredientId,
-            ingredientName: previous.ingredient.name,
-            copiedQuantity: 0,
-            requestedQuantity,
-            status: "skipped",
-            message: "Yesterday has no remaining quantity to carry forward"
-          });
-          continue;
-        }
-
-        const existingToday = todayMap.get(previous.ingredientId);
-        if (existingToday) {
-          const canOverwriteZeroAllocation =
-            toFixedQuantity(getNumericValue(existingToday.allocatedQuantity)) <= 0 &&
-            toFixedQuantity(getNumericValue(existingToday.usedQuantity)) <= 0 &&
-            toFixedQuantity(getNumericValue(existingToday.remainingQuantity)) <= 0;
-
-          if (!canOverwriteZeroAllocation) {
-            details.push({
-              ingredientId: previous.ingredientId,
-              ingredientName: previous.ingredient.name,
-              copiedQuantity: 0,
-              requestedQuantity,
-              status: "skipped",
-              message: "Today allocation already exists"
-            });
-            continue;
-          }
-
-          existingToday.allocatedQuantity = requestedQuantity;
-          existingToday.usedQuantity = 0;
-          existingToday.remainingQuantity = requestedQuantity;
-          await manager.save(DailyAllocation, existingToday);
-
-          await manager.save(
-            IngredientStockLog,
-            manager.create(IngredientStockLog, {
-              ingredientId: previous.ingredientId,
-              type: IngredientStockLogType.ADJUST,
-              quantity: requestedQuantity,
-              note:
-                payload.note ??
-                `Carry-forward allocation from ${previousDate} remaining balance. Updated existing zero allocation.`
-            })
-          );
-
-          details.push({
-            ingredientId: previous.ingredientId,
-            ingredientName: previous.ingredient.name,
-            copiedQuantity: requestedQuantity,
-            requestedQuantity,
-            status: "copied",
-            message: "Remaining quantity carried forward into existing zero allocation"
-          });
-          continue;
-        }
-
-        const copiedQuantity = requestedQuantity;
-        const allocation = manager.create(DailyAllocation, {
-          ingredientId: previous.ingredientId,
-          date: targetDate,
-          allocatedQuantity: copiedQuantity,
-          usedQuantity: 0,
-          remainingQuantity: copiedQuantity
-        });
-        await manager.save(DailyAllocation, allocation);
-
-        await manager.save(
-          IngredientStockLog,
-          manager.create(IngredientStockLog, {
-            ingredientId: previous.ingredientId,
-            type: IngredientStockLogType.ADJUST,
-            quantity: copiedQuantity,
-            note:
-              payload.note ??
-              `Carry-forward allocation from ${previousDate} remaining balance. No central stock deduction.`
-          })
-        );
-
-        details.push({
-          ingredientId: previous.ingredientId,
-          ingredientName: previous.ingredient.name,
-          copiedQuantity,
-          requestedQuantity,
-          status: "copied",
-          message: "Remaining quantity carried forward successfully"
-        });
-      }
-    });
-
-    return {
-      date: targetDate,
-      previousDate,
-      summary: {
-        copiedCount: details.filter((entry) => entry.status === "copied").length,
-        partialCount: 0,
-        skippedCount: details.filter((entry) => entry.status === "skipped").length
-      },
-      details
-    };
+    throw new AppError(409, allocationDisabledMessage);
   }
 
   private async getOrCreatePosBillingControl() {
@@ -1306,7 +1081,7 @@ export class IngredientsService {
 
     const created = this.posBillingControlRepository.create({
       isBillingEnabled: true,
-      enforceDailyAllocation: true,
+      enforceDailyAllocation: false,
       reason: null,
       updatedByUserId: null
     });
@@ -1325,7 +1100,7 @@ export class IngredientsService {
       return [];
     }
 
-    const [allocations, usageRows] = await Promise.all([
+    const [allocations, usageRows, stocks] = await Promise.all([
       this.allocationRepository.find({
         where: { ingredientId: In(ingredientIds), date: reportDate }
       }),
@@ -1336,28 +1111,37 @@ export class IngredientsService {
         .where("usage.usageDate = :reportDate", { reportDate })
         .andWhere("usage.ingredientId IS NOT NULL")
         .groupBy("usage.ingredientId")
-        .getRawMany<{ ingredientId: string; usedQuantity: string }>()
+        .getRawMany<{ ingredientId: string; usedQuantity: string }>(),
+      this.stockRepository.find({
+        where: { ingredientId: In(ingredientIds) }
+      })
     ]);
 
     const allocationMap = new Map(allocations.map((allocation) => [allocation.ingredientId, allocation]));
+    const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, toFixedQuantity(getNumericValue(stock.totalStock))]));
     const usageMap = new Map(
       usageRows.map((row) => [row.ingredientId, toFixedQuantity(getNumericValue(row.usedQuantity))])
     );
 
     return ingredients.map((ingredient) => {
       const allocation = allocationMap.get(ingredient.id);
+      const currentStock = stockMap.get(ingredient.id) ?? 0;
       const allocatedQuantity = toFixedQuantity(getNumericValue(allocation?.allocatedQuantity));
       const allocationUsed = toFixedQuantity(getNumericValue(allocation?.usedQuantity));
       const usageUsed = usageMap.get(ingredient.id) ?? 0;
       const usedQuantity = toFixedQuantity(Math.max(allocationUsed, usageUsed));
-      const expectedRemainingQuantity = toFixedQuantity(Math.max(allocatedQuantity - usedQuantity, 0));
+      const hasAllocation = allocatedQuantity > 0;
+      const openingQuantity = hasAllocation ? allocatedQuantity : toFixedQuantity(currentStock + usedQuantity);
+      const expectedRemainingQuantity = hasAllocation
+        ? toFixedQuantity(Math.max(allocatedQuantity - usedQuantity, 0))
+        : currentStock;
 
       return {
         ingredientId: ingredient.id,
         ingredientName: ingredient.name,
         categoryName: ingredient.category.name,
         unit: ingredient.unit,
-        allocatedQuantity,
+        allocatedQuantity: openingQuantity,
         usedQuantity,
         expectedRemainingQuantity
       };
@@ -1678,8 +1462,25 @@ export class IngredientsService {
     };
   }
 
-  async getStockAudit(filters: { date?: string; page: number; limit: number; staffId?: string }) {
-    const targetDate = filters.date || getTodayDateString();
+  async getStockAudit(filters: { dateFrom?: string; dateTo?: string; page: number; limit: number; staffId?: string }) {
+    const rangeTo = normalizeDateInput(filters.dateTo || getTodayDateString(), "Date To");
+    let rangeFrom = filters.dateFrom ? normalizeDateInput(filters.dateFrom, "Date From") : "";
+
+    if (!rangeFrom) {
+      const firstReportQuery = this.closingReportRepository
+        .createQueryBuilder("report")
+        .select("MIN(report.reportDate)", "firstDate");
+      if (filters.staffId) {
+        firstReportQuery.where("report.staffId = :staffId", { staffId: filters.staffId });
+      }
+      const firstReport = await firstReportQuery.getRawOne<{ firstDate: string | Date | null }>();
+      rangeFrom = firstReport?.firstDate ? normalizeDateInput(firstReport.firstDate, "Date From") : rangeTo;
+    }
+
+    if (rangeFrom > rangeTo) {
+      throw new AppError(422, "Date From must be before Date To.");
+    }
+
     const page = Math.max(1, filters.page || 1);
     const limit = Math.min(100, Math.max(1, filters.limit || 20));
     const offset = (page - 1) * limit;
@@ -1687,7 +1488,7 @@ export class IngredientsService {
     const query = this.closingReportRepository
       .createQueryBuilder("report")
       .leftJoinAndSelect("report.staff", "staff")
-      .where("report.reportDate = :reportDate", { reportDate: targetDate })
+      .where("report.reportDate >= :rangeFrom AND report.reportDate <= :rangeTo", { rangeFrom, rangeTo })
       .orderBy("report.submittedAt", "DESC");
 
     if (filters.staffId) {
@@ -1695,8 +1496,86 @@ export class IngredientsService {
     }
 
     const reports = await query.getMany();
+
+    const purchaseRows = await AppDataSource.query(
+      `
+      SELECT
+        po."purchaseDate" AS "date",
+        line."ingredientId" AS "ingredientId",
+        SUM(COALESCE(line."stockAdded", 0)) AS "quantity"
+      FROM "purchase_order_lines" line
+      INNER JOIN "purchase_orders" po ON po."id" = line."purchaseOrderId"
+      WHERE line."lineType" = 'ingredient'
+        AND line."ingredientId" IS NOT NULL
+        AND po."purchaseDate" >= $1
+        AND po."purchaseDate" <= $2
+      GROUP BY po."purchaseDate", line."ingredientId"
+      `,
+      [rangeFrom, rangeTo]
+    );
+
+    const dumpRows = await AppDataSource.query(
+      `
+      SELECT
+        dump."entryDate" AS "date",
+        COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text) AS "ingredientId",
+        SUM(
+          COALESCE(
+            CASE WHEN impact ? 'quantity' THEN NULLIF(impact->>'quantity', '')::numeric ELSE NULL END,
+            dump."baseQuantity"
+          )
+        ) AS "quantity"
+      FROM "dump_entries" dump
+      LEFT JOIN LATERAL jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(dump."ingredientImpacts") = 'array' THEN dump."ingredientImpacts"
+          ELSE '[]'::jsonb
+        END
+      ) impact ON TRUE
+      WHERE dump."entryDate" >= $1
+        AND dump."entryDate" <= $2
+        AND (
+          dump."entryType" = 'ingredient'
+          OR (impact->>'ingredientId') IS NOT NULL
+        )
+      GROUP BY
+        dump."entryDate",
+        COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text)
+      `,
+      [rangeFrom, rangeTo]
+    );
+
+    const movementKey = (ingredientId: string, date: string) => `${ingredientId}::${date}`;
+    const purchaseByKey = new Map<string, number>();
+    const dumpByKey = new Map<string, number>();
+
+    (purchaseRows as Array<Record<string, unknown>>).forEach((row) => {
+      const ingredientId = String(row.ingredientId ?? "");
+      const date = String(row.date ?? "");
+      if (!ingredientId || !date) {
+        return;
+      }
+      purchaseByKey.set(
+        movementKey(ingredientId, date),
+        toFixedQuantity(getNumericValue(row.quantity as string | number | null | undefined))
+      );
+    });
+
+    (dumpRows as Array<Record<string, unknown>>).forEach((row) => {
+      const ingredientId = String(row.ingredientId ?? "");
+      const date = String(row.date ?? "");
+      if (!ingredientId || !date) {
+        return;
+      }
+      dumpByKey.set(
+        movementKey(ingredientId, date),
+        toFixedQuantity(getNumericValue(row.quantity as string | number | null | undefined))
+      );
+    });
+
     const flattenedItems = reports.flatMap((report) =>
       (report.items ?? []).map((item) => ({
+        reportItemId: `${report.id}-${item.ingredientId}`,
         reportId: report.id,
         reportDate: report.reportDate,
         staffId: report.staffId,
@@ -1705,6 +1584,14 @@ export class IngredientsService {
         ingredientId: item.ingredientId,
         ingredientName: item.ingredientName,
         unit: item.unit,
+        openingStockQuantity: toFixedQuantity(getNumericValue(item.allocatedQuantity)),
+        purchaseStockQuantity: toFixedQuantity(
+          purchaseByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0
+        ),
+        consumptionQuantity: toFixedQuantity(getNumericValue(item.usedQuantity)),
+        dumpQuantity: toFixedQuantity(dumpByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0),
+        expectedStockQuantity: toFixedQuantity(getNumericValue(item.expectedRemainingQuantity)),
+        enteredStockQuantity: toFixedQuantity(getNumericValue(item.reportedRemainingQuantity)),
         allocatedQuantity: toFixedQuantity(getNumericValue(item.allocatedQuantity)),
         usedQuantity: toFixedQuantity(getNumericValue(item.usedQuantity)),
         expectedRemainingQuantity: toFixedQuantity(getNumericValue(item.expectedRemainingQuantity)),
@@ -1717,20 +1604,53 @@ export class IngredientsService {
     const totalItems = flattenedItems.length;
     const pagedItems = flattenedItems.slice(offset, offset + limit);
     const totalExpected = toFixedQuantity(
-      flattenedItems.reduce((sum, item) => sum + item.expectedRemainingQuantity, 0)
+      flattenedItems.reduce((sum, item) => sum + item.expectedStockQuantity, 0)
     );
-    const totalReported = toFixedQuantity(
-      flattenedItems.reduce((sum, item) => sum + item.reportedRemainingQuantity, 0)
+    const totalEntered = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.enteredStockQuantity, 0)
     );
     const totalVarianceAbs = toFixedQuantity(
       flattenedItems.reduce((sum, item) => sum + Math.abs(item.varianceQuantity), 0)
     );
+    const totalPurchaseStock = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.purchaseStockQuantity, 0)
+    );
+    const totalConsumptionStock = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.consumptionQuantity, 0)
+    );
+    const totalDumpStock = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.dumpQuantity, 0)
+    );
     const mismatchedIngredients = flattenedItems.filter((item) => item.isMismatch).length;
     const uniqueStaff = new Set(reports.map((report) => report.staffId));
     const control = await this.getOrCreatePosBillingControl();
+    const unallocatedStockSummary = await AppDataSource.query(
+      `
+      SELECT
+        COALESCE(SUM(stock."totalStock"), 0) AS "totalUnallocatedStock",
+        COALESCE(SUM(CASE WHEN COALESCE(stock."totalStock", 0) > 0 THEN 1 ELSE 0 END), 0) AS "ingredientsWithUnallocated"
+      FROM "ingredient_stocks" stock
+      INNER JOIN "ingredients" ingredient ON ingredient."id" = stock."ingredientId"
+      WHERE ingredient."isActive" = TRUE
+      `
+    );
+    const totalUnallocatedStock = toFixedQuantity(
+      getNumericValue((unallocatedStockSummary?.[0] as Record<string, unknown> | undefined)?.totalUnallocatedStock as
+        | string
+        | number
+        | null
+        | undefined)
+    );
+    const ingredientsWithUnallocated = Math.max(
+      0,
+      Number(
+        (unallocatedStockSummary?.[0] as Record<string, unknown> | undefined)?.ingredientsWithUnallocated ?? 0
+      ) || 0
+    );
 
     return {
-      date: targetDate,
+      dateFrom: rangeFrom,
+      dateTo: rangeTo,
       stats: {
         totalReports: reports.length,
         staffSubmitted: uniqueStaff.size,
@@ -1738,8 +1658,13 @@ export class IngredientsService {
         mismatchedIngredients,
         matchedIngredients: Math.max(totalItems - mismatchedIngredients, 0),
         totalExpectedRemaining: totalExpected,
-        totalReportedRemaining: totalReported,
-        totalVarianceAbs
+        totalReportedRemaining: totalEntered,
+        totalVarianceAbs,
+        totalPurchaseStock,
+        totalConsumptionStock,
+        totalDumpStock,
+        totalUnallocatedStock,
+        ingredientsWithUnallocated
       },
       posBillingControl: {
         isBillingEnabled: control.isBillingEnabled,
@@ -1755,6 +1680,8 @@ export class IngredientsService {
         closingSlot: report.closingSlot,
         isCarryForwardClosing: report.isCarryForwardClosing,
         totalIngredients: report.totalIngredients,
+        mismatchRows: (report.items ?? []).filter((item) => Math.abs(getNumericValue(item.varianceQuantity)) > 0.0001).length,
+        matchedRows: (report.items ?? []).filter((item) => Math.abs(getNumericValue(item.varianceQuantity)) <= 0.0001).length,
         totalExpectedRemaining: toFixedQuantity(getNumericValue(report.totalExpectedRemaining)),
         totalReportedRemaining: toFixedQuantity(getNumericValue(report.totalReportedRemaining)),
         totalVariance: toFixedQuantity(getNumericValue(report.totalVariance)),
@@ -1769,185 +1696,13 @@ export class IngredientsService {
   }
 
   async saveAllocation(payload: { ingredientId: string; date: string; allocatedQuantity: number; note?: string }) {
-    const ingredient = await this.getActiveIngredientOrFail(payload.ingredientId);
-    const targetDate = payload.date || getTodayDateString();
-    const requestedAllocation = toFixedQuantity(payload.allocatedQuantity);
-
-    if (requestedAllocation < 0) {
-      throw new AppError(422, "Allocated quantity cannot be negative");
-    }
-
-    const stock = await this.getOrCreateStockByIngredientId(payload.ingredientId);
-    const existing = await this.allocationRepository.findOne({
-      where: { ingredientId: payload.ingredientId, date: targetDate }
-    });
-
-    const currentStock = getNumericValue(stock.totalStock);
-
-    if (existing) {
-      const previousAllocated = getNumericValue(existing.allocatedQuantity);
-      const usedQuantity = getNumericValue(existing.usedQuantity);
-      const maxAllowed = toFixedQuantity(previousAllocated + currentStock);
-
-      if (requestedAllocation < usedQuantity) {
-        throw new AppError(422, "Allocated quantity cannot be less than used quantity");
-      }
-
-      if (requestedAllocation > maxAllowed) {
-        throw new AppError(
-          409,
-          `Insufficient stock available. Maximum allocatable is ${maxAllowed} ${ingredient.unit} (current stock ${toFixedQuantity(currentStock)} ${ingredient.unit}).`
-        );
-      }
-
-      const delta = toFixedQuantity(requestedAllocation - previousAllocated);
-
-      stock.totalStock = toFixedQuantity(currentStock - delta);
-      stock.lastUpdatedAt = new Date();
-      await this.stockRepository.save(stock);
-
-      existing.allocatedQuantity = requestedAllocation;
-      existing.remainingQuantity = toFixedQuantity(requestedAllocation - usedQuantity);
-      const saved = await this.allocationRepository.save(existing);
-
-      await this.createStockLog({
-        ingredientId: payload.ingredientId,
-        type: IngredientStockLogType.ALLOCATE,
-        quantity: delta,
-        note: payload.note
-      });
-
-      return {
-        id: saved.id,
-        ingredientId: saved.ingredientId,
-        ingredientName: ingredient.name,
-        date: saved.date,
-        allocatedQuantity: toFixedQuantity(getNumericValue(saved.allocatedQuantity)),
-        usedQuantity: toFixedQuantity(getNumericValue(saved.usedQuantity)),
-        remainingQuantity: toFixedQuantity(getNumericValue(saved.remainingQuantity))
-      };
-    }
-
-    const maxAllowed = toFixedQuantity(currentStock);
-    if (requestedAllocation > maxAllowed) {
-      throw new AppError(
-        409,
-        `Insufficient stock available. Maximum allocatable is ${maxAllowed} ${ingredient.unit}.`
-      );
-    }
-
-    stock.totalStock = toFixedQuantity(currentStock - requestedAllocation);
-    stock.lastUpdatedAt = new Date();
-    await this.stockRepository.save(stock);
-
-    const allocation = this.allocationRepository.create({
-      ingredientId: payload.ingredientId,
-      date: targetDate,
-      allocatedQuantity: requestedAllocation,
-      usedQuantity: 0,
-      remainingQuantity: requestedAllocation
-    });
-
-    const saved = await this.allocationRepository.save(allocation);
-
-    await this.createStockLog({
-      ingredientId: payload.ingredientId,
-      type: IngredientStockLogType.ALLOCATE,
-      quantity: requestedAllocation,
-      note: payload.note
-    });
-
-    return {
-      id: saved.id,
-      ingredientId: saved.ingredientId,
-      ingredientName: ingredient.name,
-      date: saved.date,
-      allocatedQuantity: toFixedQuantity(getNumericValue(saved.allocatedQuantity)),
-      usedQuantity: toFixedQuantity(getNumericValue(saved.usedQuantity)),
-      remainingQuantity: toFixedQuantity(getNumericValue(saved.remainingQuantity))
-    };
+    throw new AppError(409, allocationDisabledMessage);
   }
 
   async updateAllocation(
     id: string,
     payload: { allocatedQuantity?: number; usedQuantity?: number; note?: string }
   ) {
-    const allocation = await this.allocationRepository.findOne({ where: { id } });
-    if (!allocation) {
-      throw new AppError(404, "Allocation record not found");
-    }
-
-    await this.getActiveIngredientOrFail(allocation.ingredientId);
-    const stock = await this.getOrCreateStockByIngredientId(allocation.ingredientId);
-    let currentStock = getNumericValue(stock.totalStock);
-
-    let allocatedQuantity = getNumericValue(allocation.allocatedQuantity);
-    let usedQuantity = getNumericValue(allocation.usedQuantity);
-
-    if (payload.allocatedQuantity !== undefined) {
-      const nextAllocated = toFixedQuantity(payload.allocatedQuantity);
-      if (nextAllocated < 0) {
-        throw new AppError(422, "Allocated quantity cannot be negative");
-      }
-
-      const candidateUsed = payload.usedQuantity !== undefined ? toFixedQuantity(payload.usedQuantity) : usedQuantity;
-      if (nextAllocated < candidateUsed) {
-        throw new AppError(422, "Allocated quantity cannot be less than used quantity");
-      }
-
-      const delta = toFixedQuantity(nextAllocated - allocatedQuantity);
-      if (delta > currentStock) {
-        throw new AppError(409, "Insufficient stock available");
-      }
-
-      currentStock = toFixedQuantity(currentStock - delta);
-      allocatedQuantity = nextAllocated;
-
-      await this.createStockLog({
-        ingredientId: allocation.ingredientId,
-        type: IngredientStockLogType.ALLOCATE,
-        quantity: delta,
-        note: payload.note
-      });
-    }
-
-    if (payload.usedQuantity !== undefined) {
-      const nextUsed = toFixedQuantity(payload.usedQuantity);
-      if (nextUsed < 0) {
-        throw new AppError(422, "Used quantity cannot be negative");
-      }
-
-      if (nextUsed > allocatedQuantity) {
-        throw new AppError(422, "Used quantity cannot exceed allocated quantity");
-      }
-
-      const diffUsed = toFixedQuantity(nextUsed - usedQuantity);
-      usedQuantity = nextUsed;
-
-      await this.createStockLog({
-        ingredientId: allocation.ingredientId,
-        type: diffUsed >= 0 ? IngredientStockLogType.USE : IngredientStockLogType.ADJUST,
-        quantity: diffUsed,
-        note: payload.note
-      });
-    }
-
-    stock.totalStock = toFixedQuantity(currentStock);
-    stock.lastUpdatedAt = new Date();
-    await this.stockRepository.save(stock);
-
-    allocation.allocatedQuantity = toFixedQuantity(allocatedQuantity);
-    allocation.usedQuantity = toFixedQuantity(usedQuantity);
-    allocation.remainingQuantity = toFixedQuantity(allocatedQuantity - usedQuantity);
-    const saved = await this.allocationRepository.save(allocation);
-
-    return {
-      id: saved.id,
-      ingredientId: saved.ingredientId,
-      date: saved.date,
-      allocatedQuantity: toFixedQuantity(getNumericValue(saved.allocatedQuantity)),
-      usedQuantity: toFixedQuantity(getNumericValue(saved.usedQuantity)),
-      remainingQuantity: toFixedQuantity(getNumericValue(saved.remainingQuantity))
-    };
+    throw new AppError(409, allocationDisabledMessage);
   }
 }

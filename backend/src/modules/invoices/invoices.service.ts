@@ -6,6 +6,7 @@ import { AppError } from "../../errors/app-error";
 import { Customer } from "../customers/customer.entity";
 import { DailyAllocation } from "../ingredients/daily-allocation.entity";
 import { Ingredient } from "../ingredients/ingredient.entity";
+import { IngredientStock } from "../ingredients/ingredient-stock.entity";
 import { User } from "../users/user.entity";
 import {
   type KitchenStatus,
@@ -126,6 +127,7 @@ const cleanOptionalText = (value?: string | null) => {
 };
 
 const normalizePhone = (value: string) => value.replace(/[^\d+]/g, "").trim();
+const toQty = (value: number) => Number(value.toFixed(3));
 
 const getPaginationMeta = (page: number, limit: number, total: number) => ({
   page,
@@ -196,17 +198,43 @@ export class InvoicesService {
     return this.customerRepository.save(created);
   }
 
-  private async applyUsageToDailyAllocation(
+  private async applyUsageToStockAndDailyAllocation(
     manager: EntityManager,
-    usage: { ingredientId: string | null; usageDate: string; consumedQuantity: number }
+    usage: {
+      ingredientId: string | null;
+      ingredientNameSnapshot?: string;
+      baseUnit?: string;
+      usageDate: string;
+      consumedQuantity: number;
+    }
   ) {
     if (!usage.ingredientId) {
       return;
     }
 
-    const consumedQuantity = Number(usage.consumedQuantity);
+    const consumedQuantity = toQty(Number(usage.consumedQuantity));
     if (!Number.isFinite(consumedQuantity) || consumedQuantity <= 0) {
       return;
+    }
+
+    const stock = await manager.findOne(IngredientStock, {
+      where: { ingredientId: usage.ingredientId }
+    });
+
+    const availableStock = toQty(Number(stock?.totalStock ?? 0));
+    if (availableStock + 0.000001 < consumedQuantity) {
+      const ingredientLabel = usage.ingredientNameSnapshot?.trim() || "ingredient";
+      const unitLabel = usage.baseUnit?.trim() || "unit";
+      throw new AppError(
+        409,
+        `Insufficient stock for ${ingredientLabel}. Available ${availableStock} ${unitLabel}, required ${consumedQuantity} ${unitLabel}.`
+      );
+    }
+
+    if (stock) {
+      stock.totalStock = toQty(availableStock - consumedQuantity);
+      stock.lastUpdatedAt = new Date();
+      await manager.save(IngredientStock, stock);
     }
 
     const activeAllocations = await manager.find(DailyAllocation, {
@@ -226,16 +254,16 @@ export class InvoicesService {
         break;
       }
 
-      const available = Number(allocation.remainingQuantity);
+      const available = toQty(Number(allocation.remainingQuantity));
       if (available <= 0) {
         continue;
       }
 
-      const usedNow = Math.min(available, remainingToApply);
-      allocation.usedQuantity = Number(allocation.usedQuantity) + usedNow;
-      allocation.remainingQuantity = Math.max(Number(allocation.remainingQuantity) - usedNow, 0);
+      const usedNow = toQty(Math.min(available, remainingToApply));
+      allocation.usedQuantity = toQty(Number(allocation.usedQuantity) + usedNow);
+      allocation.remainingQuantity = toQty(Math.max(Number(allocation.remainingQuantity) - usedNow, 0));
       await manager.save(DailyAllocation, allocation);
-      remainingToApply -= usedNow;
+      remainingToApply = toQty(remainingToApply - usedNow);
     }
 
     if (remainingToApply <= 0) {
@@ -254,17 +282,17 @@ export class InvoicesService {
         ingredientId: usage.ingredientId,
         date: usage.usageDate,
         allocatedQuantity: 0,
-        usedQuantity: remainingToApply,
+        usedQuantity: toQty(remainingToApply),
         remainingQuantity: 0
       });
       await manager.save(DailyAllocation, created);
       return;
     }
 
-    const allocated = Number(sameDateAllocation.allocatedQuantity);
-    const nextUsed = Number(sameDateAllocation.usedQuantity) + remainingToApply;
+    const allocated = toQty(Number(sameDateAllocation.allocatedQuantity));
+    const nextUsed = toQty(Number(sameDateAllocation.usedQuantity) + remainingToApply);
     sameDateAllocation.usedQuantity = nextUsed;
-    sameDateAllocation.remainingQuantity = Math.max(allocated - nextUsed, 0);
+    sameDateAllocation.remainingQuantity = toQty(Math.max(allocated - nextUsed, 0));
     await manager.save(DailyAllocation, sameDateAllocation);
   }
 
@@ -628,8 +656,10 @@ export class InvoicesService {
               })
             );
 
-            await this.applyUsageToDailyAllocation(manager, {
+            await this.applyUsageToStockAndDailyAllocation(manager, {
               ingredientId: event.ingredientId ?? null,
+              ingredientNameSnapshot,
+              baseUnit: event.baseUnit,
               usageDate: event.usageDate,
               consumedQuantity: Number(event.consumedQuantity)
             });
@@ -782,8 +812,10 @@ export class InvoicesService {
 
     return AppDataSource.transaction(async (manager) => {
       const saved = await manager.save(InvoiceUsageEvent, usageEvent);
-      await this.applyUsageToDailyAllocation(manager, {
+      await this.applyUsageToStockAndDailyAllocation(manager, {
         ingredientId: payload.ingredientId ?? null,
+        ingredientNameSnapshot,
+        baseUnit: payload.baseUnit,
         usageDate: payload.usageDate,
         consumedQuantity: Number(payload.consumedQuantity)
       });

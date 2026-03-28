@@ -30,14 +30,16 @@ const createSchema = z.object({
   email: z.string().email("Please enter a valid email").optional().or(z.literal("")),
   role: z.nativeEnum(UserRole).refine((role) => role !== UserRole.ADMIN, "Admin role is not allowed"),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  assignedReports: z.array(z.string()).default([])
+  assignedReports: z.array(z.string()).default([]),
+  assignedModules: z.array(z.string()).default([])
 });
 
 const updateSchema = z.object({
   fullName: z.string().min(2, "Full name must be at least 2 characters"),
   email: z.string().email("Please enter a valid email").optional().or(z.literal("")),
   role: z.nativeEnum(UserRole).refine((role) => role !== UserRole.ADMIN, "Admin role is not allowed"),
-  assignedReports: z.array(z.string()).default([])
+  assignedReports: z.array(z.string()).default([]),
+  assignedModules: z.array(z.string()).default([])
 });
 
 type StaffFormValues = {
@@ -47,6 +49,7 @@ type StaffFormValues = {
   role: UserRole;
   password: string;
   assignedReports: string[];
+  assignedModules: string[];
 };
 
 type StaffFormModalProps = {
@@ -61,9 +64,11 @@ type StaffFormModalProps = {
     role: UserRole;
     password?: string;
     assignedReports?: string[];
+    assignedModules?: string[];
   }) => Promise<void>;
   loading?: boolean;
   reportOptions: AppSelectOption[];
+  moduleOptions: AppSelectOption[];
 };
 
 const roleOptions = [
@@ -80,7 +85,8 @@ export const StaffFormModal = ({
   initialData,
   onSubmit,
   loading,
-  reportOptions
+  reportOptions,
+  moduleOptions
 }: StaffFormModalProps) => {
   const isCreate = mode === "create";
   const schema = isCreate ? createSchema : updateSchema;
@@ -100,7 +106,8 @@ export const StaffFormModal = ({
       email: "",
       role: UserRole.STAFF,
       password: "",
-      assignedReports: []
+      assignedReports: [],
+      assignedModules: []
     }
   });
 
@@ -116,7 +123,8 @@ export const StaffFormModal = ({
         email: initialData.email ?? "",
         role: initialData.role,
         password: "",
-        assignedReports: initialData.assignedReports ?? []
+        assignedReports: initialData.assignedReports ?? [],
+        assignedModules: initialData.assignedModules ?? []
       });
       return;
     }
@@ -127,7 +135,8 @@ export const StaffFormModal = ({
       email: "",
       role: UserRole.STAFF,
       password: "",
-      assignedReports: []
+      assignedReports: [],
+      assignedModules: []
     });
   }, [initialData, isOpen, reset]);
 
@@ -196,8 +205,26 @@ export const StaffFormModal = ({
                   values={field.value ?? []}
                   options={reportOptions}
                   onValueChange={field.onChange}
+                  menuPortalTarget={null}
+                  menuPosition="absolute"
                   placeholder="Select reports staff can access"
                   helperText="Only selected reports will be visible in staff desktop reports page."
+                />
+              )}
+            />
+            <Controller
+              control={control}
+              name="assignedModules"
+              render={({ field }) => (
+                <AppMultiSelect
+                  label="Modules Access"
+                  values={field.value ?? []}
+                  options={moduleOptions}
+                  onValueChange={field.onChange}
+                  menuPortalTarget={null}
+                  menuPosition="absolute"
+                  placeholder="Select modules staff can access"
+                  helperText="Only selected modules will be visible to staff."
                 />
               )}
             />

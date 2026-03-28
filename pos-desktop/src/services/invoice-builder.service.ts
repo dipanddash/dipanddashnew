@@ -143,16 +143,18 @@ export const posBillingService = {
       }
     }
 
-    const allocationByIngredientId = new Map(
-      snapshot.allocations.map((allocation) => [allocation.ingredientId, allocation])
+    const stockByIngredientId = new Map(
+      (snapshot.ingredientStocks ?? []).map((stock) => [stock.ingredientId, stock])
     );
+    const allocationByIngredientId = new Map(snapshot.allocations.map((allocation) => [allocation.ingredientId, allocation]));
 
     const usageDate = new Date().toISOString().slice(0, 10);
     return [...usageMap.values()].map((entry) => {
       const consumedQuantity = Number(entry.consumedQuantity.toFixed(6));
+      const stock = stockByIngredientId.get(entry.ingredientId);
       const allocation = allocationByIngredientId.get(entry.ingredientId);
-      const allocatedQuantity = Number((allocation?.remainingQuantity ?? 0).toFixed(6));
-      const overusedQuantity = Number(Math.max(consumedQuantity - allocatedQuantity, 0).toFixed(6));
+      const availableQuantity = Number((stock?.availableQuantity ?? allocation?.remainingQuantity ?? 0).toFixed(6));
+      const overusedQuantity = Number(Math.max(consumedQuantity - availableQuantity, 0).toFixed(6));
 
       return {
         idempotencyKey: makeId(),
@@ -160,7 +162,7 @@ export const posBillingService = {
         ingredientNameSnapshot: entry.ingredientNameSnapshot,
         consumedQuantity,
         baseUnit: entry.baseUnit,
-        allocatedQuantity,
+        allocatedQuantity: availableQuantity,
         overusedQuantity,
         usageDate,
         deviceId: env.deviceId,

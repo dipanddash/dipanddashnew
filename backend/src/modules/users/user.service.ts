@@ -51,6 +51,7 @@ export class UserService {
     role: UserRole;
     isActive?: boolean;
     assignedReports?: string[];
+    assignedModules?: string[];
   }): Promise<SafeUser> {
     const whereConditions: FindOptionsWhere<User>[] = [
       { username: payload.username }
@@ -75,7 +76,8 @@ export class UserService {
       email: payload.email ?? null,
       role: payload.role,
       isActive: payload.isActive ?? true,
-      assignedReports: payload.assignedReports ?? []
+      assignedReports: payload.assignedReports ?? [],
+      assignedModules: payload.assignedModules ?? []
     });
 
     return this.userRepository.save(user);
@@ -83,7 +85,7 @@ export class UserService {
 
   async updateStaff(
     id: string,
-    payload: Partial<Pick<User, "fullName" | "email" | "role" | "assignedReports">>
+    payload: Partial<Pick<User, "fullName" | "email" | "role" | "assignedReports" | "assignedModules">>
   ): Promise<SafeUser> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) {
@@ -105,6 +107,9 @@ export class UserService {
     user.role = payload.role ?? user.role;
     if (payload.assignedReports !== undefined) {
       user.assignedReports = payload.assignedReports;
+    }
+    if (payload.assignedModules !== undefined) {
+      user.assignedModules = payload.assignedModules;
     }
 
     return this.userRepository.save(user);

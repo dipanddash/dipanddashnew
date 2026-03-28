@@ -3,6 +3,19 @@ import { z } from "zod";
 import { INGREDIENT_UNITS } from "./ingredients.constants";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const isValidDateLike = (value: string) => {
+  const trimmed = value.trim();
+  if (datePattern.test(trimmed)) {
+    return true;
+  }
+
+  const parsed = new Date(trimmed);
+  return !Number.isNaN(parsed.getTime());
+};
+const dateLikeSchema = z
+  .string()
+  .trim()
+  .refine((value) => isValidDateLike(value), "Date must be in YYYY-MM-DD format");
 const unitSchema = z.enum(INGREDIENT_UNITS);
 
 export const ingredientCategoryListSchema = z.object({
@@ -220,7 +233,9 @@ export const closingReportListSchema = z.object({
 
 export const stockAuditSchema = z.object({
   query: z.object({
-    date: z.string().regex(datePattern, "Date must be in YYYY-MM-DD format").optional(),
+    dateFrom: dateLikeSchema.optional(),
+    dateTo: dateLikeSchema.optional(),
+    date: dateLikeSchema.optional(),
     staffId: z.string().uuid("Invalid staff id").optional(),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(20)

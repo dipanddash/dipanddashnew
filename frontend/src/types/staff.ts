@@ -8,6 +8,7 @@ export type Staff = {
   role: UserRole;
   isActive: boolean;
   assignedReports: string[];
+  assignedModules: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -19,6 +20,7 @@ export type CreateStaffPayload = {
   password: string;
   role: UserRole;
   assignedReports?: string[];
+  assignedModules?: string[];
 };
 
 export type UpdateStaffPayload = {
@@ -26,4 +28,5 @@ export type UpdateStaffPayload = {
   email?: string;
   role?: UserRole;
   assignedReports?: string[];
+  assignedModules?: string[];
 };

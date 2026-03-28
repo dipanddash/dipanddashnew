@@ -1,8 +1,6 @@
 import { apiClient } from "@/lib/api-client";
 import type { ApiSuccess } from "@/types/api";
 import type {
-  AllocationRow,
-  IngredientAllocation,
   IngredientAllocationStats,
   IngredientCategory,
   IngredientListItem,
@@ -10,7 +8,6 @@ import type {
   IngredientStockLog,
   IngredientUnit,
   PaginationData,
-  PosBillingControl,
   StockAuditData
 } from "@/types/ingredient";
 
@@ -30,30 +27,10 @@ type StockResponse = {
   pagination: PaginationData;
 };
 
-type AllocationListResponse = {
-  rows: AllocationRow[];
-  pagination: PaginationData;
-};
-
 type AllocationStatsResponse = IngredientAllocationStats;
 type StockAuditResponse = StockAuditData;
 
 export const ingredientsService = {
-  getPosBillingControl: async () => {
-    const response = await apiClient.get<ApiSuccess<PosBillingControl>>("/ingredients/pos-billing-control");
-    return response.data;
-  },
-  updatePosBillingControl: async (payload: {
-    isBillingEnabled?: boolean;
-    enforceDailyAllocation?: boolean;
-    reason?: string;
-  }) => {
-    const response = await apiClient.patch<ApiSuccess<PosBillingControl>>(
-      "/ingredients/pos-billing-control",
-      payload
-    );
-    return response.data;
-  },
   getCategories: async (params?: { search?: string; includeInactive?: boolean; page?: number; limit?: number }) => {
     const response = await apiClient.get<ApiSuccess<CategoryListResponse>>("/ingredients/categories", { params });
     return response.data;
@@ -139,61 +116,14 @@ export const ingredientsService = {
     );
     return response.data;
   },
-  getAllocations: async (params: {
-    date?: string;
-    overall?: boolean;
-    search?: string;
-    categoryId?: string;
-    page?: number;
-    limit?: number;
-  }) => {
-    const response = await apiClient.get<ApiSuccess<AllocationListResponse>>("/ingredients/allocations", { params });
-    return response.data;
-  },
   getAllocationStats: async (params: { date?: string; search?: string; categoryId?: string }) => {
     const response = await apiClient.get<ApiSuccess<AllocationStatsResponse>>("/ingredients/allocations/stats", {
       params
     });
     return response.data;
   },
-  getStockAudit: async (params: { date: string; staffId?: string; page?: number; limit?: number }) => {
+  getStockAudit: async (params: { dateFrom?: string; dateTo?: string; staffId?: string; page?: number; limit?: number }) => {
     const response = await apiClient.get<ApiSuccess<StockAuditResponse>>("/ingredients/stock-audit", { params });
-    return response.data;
-  },
-  assignAllStockToDate: async (payload: { date: string; note?: string }) => {
-    const response = await apiClient.post<
-      ApiSuccess<{
-        date: string;
-        summary: { allocatedCount: number; skippedCount: number; failedCount: number };
-      }>
-    >("/ingredients/allocations/assign-all", payload);
-    return response.data;
-  },
-  continueYesterdayAllocation: async (payload: { date: string; note?: string }) => {
-    const response = await apiClient.post<
-      ApiSuccess<{
-        date: string;
-        previousDate: string;
-        summary: { copiedCount: number; partialCount: number; skippedCount: number };
-      }>
-    >("/ingredients/allocations/continue-yesterday", payload);
-    return response.data;
-  },
-  saveAllocation: async (payload: { ingredientId: string; date: string; allocatedQuantity: number; note?: string }) => {
-    const response = await apiClient.post<ApiSuccess<{ allocation: IngredientAllocation }>>(
-      "/ingredients/allocations",
-      payload
-    );
-    return response.data;
-  },
-  updateAllocation: async (
-    id: string,
-    payload: { allocatedQuantity?: number; usedQuantity?: number; note?: string }
-  ) => {
-    const response = await apiClient.patch<ApiSuccess<{ allocation: IngredientAllocation }>>(
-      `/ingredients/allocations/${id}`,
-      payload
-    );
     return response.data;
   }
 };

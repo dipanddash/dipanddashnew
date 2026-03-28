@@ -1,6 +1,5 @@
 import {
   Badge,
-  Box,
   FormControl,
   FormLabel,
   HStack,
@@ -25,7 +24,22 @@ import type { StockAuditData } from "@/types/ingredient";
 import { extractErrorMessage } from "@/utils/api-error";
 import { formatQuantity, formatQuantityWithUnit } from "@/utils/quantity";
 
-const getTodayDate = () => new Date().toISOString().slice(0, 10);
+const normalizeDateInputValue = (value: string) => {
+  if (!value) {
+    return "";
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 const PaginationControls = ({
   page,
@@ -60,7 +74,9 @@ const PaginationControls = ({
 
 export const StockAuditPage = () => {
   const toast = useAppToast();
-  const [date, setDate] = useState(getTodayDate());
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [isRangeInitialized, setIsRangeInitialized] = useState(false);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [staffId, setStaffId] = useState("");
@@ -71,19 +87,27 @@ export const StockAuditPage = () => {
   const fetchAudit = useCallback(async () => {
     setLoading(true);
     try {
+      const normalizedDateFrom = normalizeDateInputValue(dateFrom);
+      const normalizedDateTo = normalizeDateInputValue(dateTo);
       const response = await ingredientsService.getStockAudit({
-        date,
+        dateFrom: normalizedDateFrom || undefined,
+        dateTo: normalizedDateTo || undefined,
         page,
         limit,
         staffId: staffId || undefined
       });
       setData(response.data);
+      if (!isRangeInitialized) {
+        setDateFrom(normalizeDateInputValue(response.data.dateFrom));
+        setDateTo(normalizeDateInputValue(response.data.dateTo));
+        setIsRangeInitialized(true);
+      }
     } catch (error) {
       toast.error(extractErrorMessage(error, "Unable to fetch stock audit data."));
     } finally {
       setLoading(false);
     }
-  }, [date, limit, page, staffId, toast]);
+  }, [dateFrom, dateTo, isRangeInitialized, limit, page, staffId, toast]);
 
   useEffect(() => {
     void fetchAudit();
@@ -91,7 +115,7 @@ export const StockAuditPage = () => {
 
   useEffect(() => {
     setPage(1);
-  }, [date, limit, staffId]);
+  }, [dateFrom, dateTo, limit, staffId]);
 
   const staffOptions = useMemo(() => {
     if (!data?.reports.length) {
@@ -112,23 +136,14 @@ export const StockAuditPage = () => {
       { key: "reportDate", header: "Business Date" },
       { key: "closingSlot", header: "Slot" },
       {
-        key: "totalExpectedRemaining",
-        header: "Expected",
-        render: (row: StockAuditData["reports"][number]) => `${formatQuantity(row.totalExpectedRemaining)} (mixed units)`
+        key: "totalIngredients",
+        header: "Ingredients",
+        render: (row: StockAuditData["reports"][number]) => row.totalIngredients
       },
       {
-        key: "totalReportedRemaining",
-        header: "Reported",
-        render: (row: StockAuditData["reports"][number]) => `${formatQuantity(row.totalReportedRemaining)} (mixed units)`
-      },
-      {
-        key: "totalVariance",
-        header: "Variance",
-        render: (row: StockAuditData["reports"][number]) => (
-          <Text color={Math.abs(row.totalVariance) > 0.0001 ? "red.600" : "green.700"}>
-            {`${formatQuantity(row.totalVariance)} (mixed units)`}
-          </Text>
-        )
+        key: "mismatchRows",
+        header: "Mismatch Rows",
+        render: (row: StockAuditData["reports"][number]) => row.mismatchRows ?? 0
       },
       {
         key: "submittedAt",
@@ -173,27 +188,40 @@ export const StockAuditPage = () => {
         )
       },
       {
-        key: "allocatedQuantity",
-        header: "Allocated",
+        key: "openingStockQuantity",
+        header: "Opening Stock",
         render: (row: StockAuditData["items"]["rows"][number]) =>
-          formatQuantityWithUnit(row.allocatedQuantity, row.unit)
+          formatQuantityWithUnit(row.openingStockQuantity ?? row.allocatedQuantity, row.unit)
       },
       {
-        key: "usedQuantity",
-        header: "Used",
-        render: (row: StockAuditData["items"]["rows"][number]) => formatQuantityWithUnit(row.usedQuantity, row.unit)
+        key: "purchaseStockQuantity",
+        header: "Purchase Stock",
+        render: (row: StockAuditData["items"]["rows"][number]) =>
+          formatQuantityWithUnit(row.purchaseStockQuantity ?? 0, row.unit)
       },
       {
-        key: "expectedRemainingQuantity",
-        header: "Expected Rem.",
+        key: "consumptionQuantity",
+        header: "Consumption",
         render: (row: StockAuditData["items"]["rows"][number]) =>
-          formatQuantityWithUnit(row.expectedRemainingQuantity, row.unit)
+          formatQuantityWithUnit(row.consumptionQuantity ?? row.usedQuantity, row.unit)
       },
       {
-        key: "reportedRemainingQuantity",
-        header: "Reported Rem.",
+        key: "dumpQuantity",
+        header: "Dump",
         render: (row: StockAuditData["items"]["rows"][number]) =>
-          formatQuantityWithUnit(row.reportedRemainingQuantity, row.unit)
+          formatQuantityWithUnit(row.dumpQuantity ?? 0, row.unit)
+      },
+      {
+        key: "expectedStockQuantity",
+        header: "Expected Stock",
+        render: (row: StockAuditData["items"]["rows"][number]) =>
+          formatQuantityWithUnit(row.expectedStockQuantity ?? row.expectedRemainingQuantity, row.unit)
+      },
+      {
+        key: "enteredStockQuantity",
+        header: "Entered Stock",
+        render: (row: StockAuditData["items"]["rows"][number]) =>
+          formatQuantityWithUnit(row.enteredStockQuantity ?? row.reportedRemainingQuantity, row.unit)
       },
       {
         key: "varianceQuantity",
@@ -213,10 +241,9 @@ export const StockAuditPage = () => {
   const totalIngredients = data?.stats.totalIngredients ?? 0;
   const mismatchedIngredients = data?.stats.mismatchedIngredients ?? 0;
   const matchedIngredients = data?.stats.matchedIngredients ?? 0;
-  const balancedReports = useMemo(
-    () => (data?.reports ?? []).filter((report) => Math.abs(report.totalVariance) <= 0.0001).length,
-    [data?.reports]
-  );
+  const totalUnallocatedStock = data?.stats.totalUnallocatedStock ?? 0;
+  const ingredientsWithUnallocated = data?.stats.ingredientsWithUnallocated ?? 0;
+  const isPosBillingEnabled = data?.posBillingControl.isBillingEnabled ?? false;
   const mismatchRate = totalIngredients > 0 ? (mismatchedIngredients / totalIngredients) * 100 : 0;
   const matchRate = totalIngredients > 0 ? (matchedIngredients / totalIngredients) * 100 : 0;
 
@@ -224,16 +251,22 @@ export const StockAuditPage = () => {
     <VStack align="stretch" spacing={6}>
       <PageHeader
         title="Stock Audit"
-        subtitle="Audit staff closing reports against expected ingredient balance with mismatch visibility."
+        subtitle="Audit staff closing entries across a date range with clear stock variance visibility."
       />
 
       <AppCard>
-        <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
+        <SimpleGrid columns={{ base: 1, md: 2, xl: 5 }} spacing={4}>
           <AppInput
-            label="Date"
+            label="Date From"
             type="date"
-            value={date}
-            onChange={(event) => setDate((event.target as HTMLInputElement).value)}
+            value={dateFrom}
+            onChange={(event) => setDateFrom((event.target as HTMLInputElement).value)}
+          />
+          <AppInput
+            label="Date To"
+            type="date"
+            value={dateTo}
+            onChange={(event) => setDateTo((event.target as HTMLInputElement).value)}
           />
           <FormControl>
             <FormLabel>Staff</FormLabel>
@@ -264,29 +297,10 @@ export const StockAuditPage = () => {
             <Switch isChecked={mismatchOnly} onChange={(event) => setMismatchOnly(event.target.checked)} />
             <Text fontWeight={600}>Mismatch only</Text>
           </FormControl>
-          <Box p={3} borderRadius="12px" bg="rgba(132, 79, 52, 0.08)" border="1px solid rgba(132, 79, 52, 0.18)">
-            <Text fontSize="xs" color="#6D584E" fontWeight={700}>
-              POS Billing
-            </Text>
-            <Text fontWeight={800} color={data?.posBillingControl.isBillingEnabled ? "green.700" : "red.700"}>
-              {data?.posBillingControl.isBillingEnabled ? "Enabled" : "Paused"}
-            </Text>
-            {data?.posBillingControl.reason ? (
-              <Text mt={1} fontSize="xs" color="#6D584E">
-                {data.posBillingControl.reason}
-              </Text>
-            ) : null}
-          </Box>
-          <Box p={3} borderRadius="12px" bg="rgba(132, 79, 52, 0.08)" border="1px solid rgba(132, 79, 52, 0.18)">
-            <Text fontSize="xs" color="#6D584E" fontWeight={700}>
-              Mismatched Rows
-            </Text>
-            <Text fontWeight={800}>{data?.stats.mismatchedIngredients ?? 0}</Text>
-          </Box>
         </SimpleGrid>
       </AppCard>
 
-      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
+      <SimpleGrid columns={{ base: 1, md: 2, xl: 5 }} spacing={4}>
         <AppCard>
           <Text color="#725D53" fontSize="sm">
             Reports
@@ -305,24 +319,32 @@ export const StockAuditPage = () => {
         </AppCard>
         <AppCard>
           <Text color="#725D53" fontSize="sm">
-            Ingredients Audited
+            Ingredient Rows Audited
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
             {totalIngredients}
           </Text>
           <Text mt={1} fontSize="xs" color="#6D584E">
-            Mismatch rows: {mismatchedIngredients}
+            Matched rows: {matchedIngredients}
           </Text>
         </AppCard>
         <AppCard>
           <Text color="#725D53" fontSize="sm">
-            Audit Accuracy
+            Unallocated Stock In Hand
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
-            {`${formatQuantity(matchRate)}%`}
+            {formatQuantity(totalUnallocatedStock)}
           </Text>
           <Text mt={1} fontSize="xs" color="#6D584E">
-            Balanced reports: {balancedReports}
+            Ingredients with stock: {ingredientsWithUnallocated}
+          </Text>
+        </AppCard>
+        <AppCard>
+          <Text color="#725D53" fontSize="sm">
+            Mismatch Rows
+          </Text>
+          <Text mt={1} fontSize="2xl" fontWeight={900}>
+            {mismatchedIngredients}
           </Text>
         </AppCard>
       </SimpleGrid>
@@ -336,6 +358,9 @@ export const StockAuditPage = () => {
             </Text>
           </VStack>
           <HStack spacing={2}>
+            <Badge colorScheme={isPosBillingEnabled ? "green" : "red"} borderRadius="full" px={3} py={1}>
+              POS {isPosBillingEnabled ? "Enabled" : "Paused"}
+            </Badge>
             <Badge colorScheme="red" borderRadius="full" px={3} py={1}>
               Mismatch {mismatchedIngredients}
             </Badge>
@@ -353,7 +378,7 @@ export const StockAuditPage = () => {
           <DataTable
             columns={reportColumns}
             rows={data?.reports ?? []}
-            emptyState={<EmptyState title="No closing reports" description="No report submitted for selected date." />}
+            emptyState={<EmptyState title="No closing reports" description="No report submitted for selected range." />}
           />
         )}
       </AppCard>
@@ -369,7 +394,7 @@ export const StockAuditPage = () => {
               emptyState={
                 <EmptyState
                   title="No audit rows"
-                  description="No ingredient rows found for selected date and filters."
+                  description="No ingredient rows found for selected range and filters."
                 />
               }
             />

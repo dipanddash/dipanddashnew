@@ -18,6 +18,11 @@ import {
 import { PurchaseOrderLine } from "./purchase-order-line.entity";
 import { PurchaseOrder } from "./purchase-order.entity";
 import { Supplier } from "./supplier.entity";
+import {
+  convertPurchaseQuantityToBase,
+  getCompatibleIngredientUnits,
+  getCompatibleProductUnits
+} from "./procurement.units";
 
 type PaginationFilters = {
   page: number;
@@ -86,6 +91,7 @@ type PurchaseOrderLinePayload = {
   ingredientId?: string;
   productId?: string;
   quantity: number;
+  quantityUnit?: string;
   unitPrice: number;
   updateUnitPrice?: boolean;
   note?: string;
@@ -667,9 +673,9 @@ export class ProcurementService {
     let totalAmount = 0;
 
     for (const line of lines) {
-      const quantity = toFixedQuantity(line.quantity);
+      const enteredQuantity = toFixedQuantity(line.quantity);
       const unitPrice = toFixedPrice(line.unitPrice);
-      const lineTotal = toFixedPrice(quantity * unitPrice);
+      const lineTotal = toFixedPrice(enteredQuantity * unitPrice);
 
       if (line.lineType === "ingredient") {
         const ingredientId = line.ingredientId;
@@ -685,22 +691,44 @@ export class ProcurementService {
           throw new AppError(404, "Ingredient not found or inactive");
         }
 
+        const enteredUnit = (line.quantityUnit || ingredient.unit).trim().toLowerCase();
+        const convertedAdded = convertPurchaseQuantityToBase(
+          "ingredient",
+          enteredQuantity,
+          enteredUnit,
+          ingredient.unit
+        );
+        if (convertedAdded === null) {
+          throw new AppError(
+            422,
+            `Unit ${enteredUnit} is not compatible with ingredient base unit ${ingredient.unit}.`
+          );
+        }
+        const stockAdded = toFixedQuantity(convertedAdded);
+
         const stock = await this.getOrCreateIngredientStock(manager, ingredient.id);
         const stockBefore = toFixedQuantity(toNumber(stock.totalStock));
-        const stockAfter = toFixedQuantity(stockBefore + quantity);
+        const stockAfter = toFixedQuantity(stockBefore + stockAdded);
         stock.totalStock = stockAfter;
         stock.lastUpdatedAt = new Date();
         await manager.save(IngredientStock, stock);
 
         if (line.updateUnitPrice) {
-          ingredient.perUnitPrice = unitPrice;
+          const oneUnitToBase = convertPurchaseQuantityToBase("ingredient", 1, enteredUnit, ingredient.unit);
+          if (oneUnitToBase === null || oneUnitToBase <= 0) {
+            throw new AppError(
+              422,
+              `Cannot convert unit price from ${enteredUnit} to ${ingredient.unit}.`
+            );
+          }
+          ingredient.perUnitPrice = toFixedPrice(unitPrice / oneUnitToBase);
           await manager.save(Ingredient, ingredient);
         }
 
         const stockLog = manager.create(IngredientStockLog, {
           ingredientId: ingredient.id,
           type: IngredientStockLogType.ADD,
-          quantity,
+          quantity: stockAdded,
           note: line.note?.trim() || `Purchased via ${purchaseNumber} from ${supplierName}.`
         });
         await manager.save(IngredientStockLog, stockLog);
@@ -713,7 +741,9 @@ export class ProcurementService {
           categoryNameSnapshot: ingredient.category?.name ?? null,
           unit: ingredient.unit,
           stockBefore,
-          stockAdded: quantity,
+          stockAdded,
+          enteredQuantity,
+          enteredUnit,
           stockAfter,
           unitPrice,
           lineTotal,
@@ -736,12 +766,23 @@ export class ProcurementService {
         throw new AppError(404, "Product not found or inactive");
       }
 
+      const enteredUnit = (line.quantityUnit || product.unit).trim().toLowerCase();
+      const convertedAdded = convertPurchaseQuantityToBase("product", enteredQuantity, enteredUnit, product.unit);
+      if (convertedAdded === null) {
+        throw new AppError(422, `Unit ${enteredUnit} is not compatible with product base unit ${product.unit}.`);
+      }
+      const stockAdded = toFixedQuantity(convertedAdded);
+
       const stockBefore = toFixedQuantity(toNumber(product.currentStock));
-      const stockAfter = toFixedQuantity(stockBefore + quantity);
+      const stockAfter = toFixedQuantity(stockBefore + stockAdded);
       product.currentStock = stockAfter;
 
       if (line.updateUnitPrice) {
-        product.purchaseUnitPrice = unitPrice;
+        const oneUnitToBase = convertPurchaseQuantityToBase("product", 1, enteredUnit, product.unit);
+        if (oneUnitToBase === null || oneUnitToBase <= 0) {
+          throw new AppError(422, `Cannot convert unit price from ${enteredUnit} to ${product.unit}.`);
+        }
+        product.purchaseUnitPrice = toFixedPrice(unitPrice / oneUnitToBase);
       }
       await manager.save(Product, product);
 
@@ -753,7 +794,9 @@ export class ProcurementService {
         categoryNameSnapshot: product.category,
         unit: product.unit,
         stockBefore,
-        stockAdded: quantity,
+        stockAdded,
+        enteredQuantity,
+        enteredUnit,
         stockAfter,
         unitPrice,
         lineTotal,
@@ -1111,6 +1154,11 @@ export class ProcurementService {
         unit: line.unit,
         stockBefore: toFixedQuantity(toNumber(line.stockBefore)),
         stockAdded: toFixedQuantity(toNumber(line.stockAdded)),
+        enteredQuantity:
+          line.enteredQuantity === null || line.enteredQuantity === undefined
+            ? null
+            : toFixedQuantity(toNumber(line.enteredQuantity)),
+        enteredUnit: line.enteredUnit,
         stockAfter: toFixedQuantity(toNumber(line.stockAfter)),
         unitPrice: toFixedPrice(toNumber(line.unitPrice)),
         lineTotal: toFixedPrice(toNumber(line.lineTotal)),
@@ -1217,6 +1265,7 @@ export class ProcurementService {
           categoryId: ingredient.categoryId,
           categoryName: ingredient.category?.name ?? "-",
           unit: ingredient.unit,
+          unitOptions: getCompatibleIngredientUnits(ingredient.unit),
           perUnitPrice: toFixedPrice(toNumber(ingredient.perUnitPrice)),
           currentStock,
           minStock: toFixedQuantity(toNumber(ingredient.minStock)),
@@ -1237,6 +1286,7 @@ export class ProcurementService {
           sku: product.sku,
           packSize: product.packSize,
           unit: product.unit,
+          unitOptions: getCompatibleProductUnits(product.unit),
           purchaseUnitPrice: toFixedPrice(toNumber(product.purchaseUnitPrice)),
           currentStock,
           minStock,

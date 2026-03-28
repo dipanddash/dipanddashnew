@@ -82,8 +82,13 @@ export class IngredientsController {
   };
 
   getStockAudit = async (req: Request, res: Response): Promise<Response> => {
+    const legacyDate = typeof req.query.date === "string" ? req.query.date : undefined;
+    const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom : legacyDate;
+    const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo : legacyDate;
+
     const data = await this.ingredientsService.getStockAudit({
-      date: typeof req.query.date === "string" ? req.query.date : undefined,
+      dateFrom,
+      dateTo,
       staffId: typeof req.query.staffId === "string" ? req.query.staffId : undefined,
       page: parsePositiveInt(req.query.page, 1),
       limit: parsePositiveInt(req.query.limit, 20)
@@ -163,27 +168,6 @@ export class IngredientsController {
     return sendSuccess(res, StatusCodes.OK, "Stock adjusted successfully", { stock });
   };
 
-  getAllocations = async (req: Request, res: Response): Promise<Response> => {
-    const overallQuery = req.query.overall;
-    const overall =
-      typeof overallQuery === "string"
-        ? ["true", "1", "yes"].includes(overallQuery.toLowerCase())
-        : Array.isArray(overallQuery)
-          ? ["true", "1", "yes"].includes(String(overallQuery[0]).toLowerCase())
-          : false;
-
-    const data = await this.ingredientsService.getAllocations({
-      date: typeof req.query.date === "string" ? req.query.date : "",
-      search: typeof req.query.search === "string" ? req.query.search : undefined,
-      categoryId: typeof req.query.categoryId === "string" ? req.query.categoryId : undefined,
-      overall,
-      page: parsePositiveInt(req.query.page, 1),
-      limit: parsePositiveInt(req.query.limit, 10)
-    });
-
-    return sendSuccess(res, StatusCodes.OK, "Allocations fetched successfully", data);
-  };
-
   getAllocationStats = async (req: Request, res: Response): Promise<Response> => {
     const data = await this.ingredientsService.getAllocationStats({
       date: typeof req.query.date === "string" ? req.query.date : "",
@@ -191,25 +175,5 @@ export class IngredientsController {
       categoryId: typeof req.query.categoryId === "string" ? req.query.categoryId : undefined
     });
     return sendSuccess(res, StatusCodes.OK, "Allocation stats fetched successfully", data);
-  };
-
-  assignAllStockToDate = async (req: Request, res: Response): Promise<Response> => {
-    const data = await this.ingredientsService.assignAllStockToDate(req.body);
-    return sendSuccess(res, StatusCodes.OK, "All available stock allocated successfully", data);
-  };
-
-  continueYesterdayAllocation = async (req: Request, res: Response): Promise<Response> => {
-    const data = await this.ingredientsService.continueYesterdayAllocation(req.body);
-    return sendSuccess(res, StatusCodes.OK, "Yesterday allocation copied successfully", data);
-  };
-
-  saveAllocation = async (req: Request, res: Response): Promise<Response> => {
-    const allocation = await this.ingredientsService.saveAllocation(req.body);
-    return sendSuccess(res, StatusCodes.OK, "Allocation saved successfully", { allocation });
-  };
-
-  updateAllocation = async (req: Request, res: Response): Promise<Response> => {
-    const allocation = await this.ingredientsService.updateAllocation(req.params.id, req.body);
-    return sendSuccess(res, StatusCodes.OK, "Allocation updated successfully", { allocation });
   };
 }

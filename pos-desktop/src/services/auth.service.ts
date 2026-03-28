@@ -20,6 +20,8 @@ type UserResponse = {
     username: string;
     fullName: string;
     role: string;
+    assignedReports?: string[];
+    assignedModules?: string[];
   };
   tokens?: {
     accessToken: string;
@@ -35,7 +37,9 @@ const toSession = (user: UserResponse["user"]): StaffSession => ({
   userId: user.id,
   username: user.username,
   fullName: user.fullName,
-  role: user.role
+  role: user.role,
+  assignedReports: user.assignedReports ?? [],
+  assignedModules: user.assignedModules ?? []
 });
 
 const persistSession = async (session: StaffSession) => {
@@ -57,6 +61,12 @@ const readPersistedSession = async (): Promise<StaffSession | null> => {
     const parsed = JSON.parse(raw) as StaffSession;
     if (!parsed.userId || !parsed.username || !parsed.role) {
       return null;
+    }
+    if (!Array.isArray(parsed.assignedReports)) {
+      parsed.assignedReports = [];
+    }
+    if (!Array.isArray(parsed.assignedModules)) {
+      parsed.assignedModules = [];
     }
     return parsed;
   } catch {

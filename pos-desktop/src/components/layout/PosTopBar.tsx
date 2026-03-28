@@ -13,6 +13,7 @@ type PosTopBarProps = {
   lastSyncedAt: string | null;
   title?: string;
   subtitle?: string;
+  compactLayout?: boolean;
   onOpenShortcuts: () => void;
   onSyncNow: () => void;
   onLogout?: () => void;
@@ -27,6 +28,7 @@ export const PosTopBar = ({
   lastSyncedAt,
   title,
   subtitle,
+  compactLayout = false,
   onOpenShortcuts,
   onSyncNow,
   onLogout
@@ -46,20 +48,29 @@ export const PosTopBar = ({
     >
       <Flex
         justify="space-between"
-        align={{ base: "stretch", xl: "center" }}
-        direction={{ base: "column", xl: "row" }}
+        align={compactLayout ? "stretch" : { base: "stretch", xl: "center" }}
+        direction={compactLayout ? "column" : { base: "column", xl: "row" }}
         gap={3}
       >
         <VStack align="start" spacing={0} minW={0}>
           <Text fontWeight={900} color="#2A1A14">
             {title ?? "Dip & Dash POS"}
           </Text>
-          <Text fontSize={{ base: "xs", md: "sm" }} color="#7A6258" noOfLines={{ base: 2, xl: 1 }}>
+          <Text
+            fontSize={{ base: "xs", md: "sm" }}
+            color="#7A6258"
+            noOfLines={compactLayout ? 2 : { base: 2, xl: 1 }}
+          >
             {subtitle ?? "Offline-first billing console"}
           </Text>
         </VStack>
 
-        <HStack spacing={2} flexWrap="wrap" justify={{ base: "flex-start", xl: "flex-end" }} align="center">
+        <HStack
+          spacing={2}
+          flexWrap="wrap"
+          justify={compactLayout ? "flex-start" : { base: "flex-start", xl: "flex-end" }}
+          align="center"
+        >
           <StatusBadge
             label={isOnline ? "Online" : "Offline"}
             tone={isOnline ? "success" : "danger"}
@@ -74,7 +85,11 @@ export const PosTopBar = ({
             }
             tone={failedSyncCount > 0 ? "danger" : pendingSyncCount > 0 ? "warning" : "info"}
           />
-          <HStack spacing={1} color={isOnline ? "green.600" : "red.500"} display={{ base: "none", md: "inline-flex" }}>
+          <HStack
+            spacing={1}
+            color={isOnline ? "green.600" : "red.500"}
+            display={compactLayout ? "none" : { base: "none", md: "inline-flex" }}
+          >
             {isOnline ? <FiWifi /> : <FiWifiOff />}
             <Text fontSize="sm">{isOnline ? "Network" : "No network"}</Text>
           </HStack>
@@ -95,7 +110,7 @@ export const PosTopBar = ({
               Logout
             </Button>
           ) : null}
-          <VStack align={{ base: "start", xl: "end" }} spacing={0}>
+          <VStack align={compactLayout ? "start" : { base: "start", xl: "end" }} spacing={0}>
             <Text fontWeight={700} fontSize="sm">
               {session?.fullName ?? "Staff"}
             </Text>

@@ -42,6 +42,7 @@ export const CustomerStartModal = ({
 }: CustomerStartModalProps) => {
   const [phone, setPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
+  const [phoneTouched, setPhoneTouched] = useState(false);
   const [searchResults, setSearchResults] = useState<CustomerRecord[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,6 +62,7 @@ export const CustomerStartModal = ({
     }
     setPhone("");
     setCustomerName("");
+    setPhoneTouched(false);
     setSearchResults([]);
     setIsSearching(false);
     setIsSubmitting(false);
@@ -127,10 +129,13 @@ export const CustomerStartModal = ({
     };
   }, [isOpen, normalizedPhone, onFindByPhone, onSearchCustomers]);
 
-  const canCreate = normalizedPhone.length >= 8 && customerName.trim().length >= 2;
+  const isValidPhone = normalizedPhone.length === 10;
+  const showPhoneError = phoneTouched && normalizedPhone.length > 0 && !isValidPhone;
+  const canCreate = isValidPhone && customerName.trim().length >= 2;
 
   const handleStart = async () => {
-    if (!normalizedPhone) {
+    setPhoneTouched(true);
+    if (!isValidPhone) {
       return;
     }
 
@@ -175,12 +180,13 @@ export const CustomerStartModal = ({
               <Input
                 id="customer-phone-input"
                 value={phone}
-                onChange={(event) => setPhone(normalizePhone(event.target.value).slice(0, 15))}
+                onChange={(event) => setPhone(normalizePhone(event.target.value).slice(0, 10))}
                 placeholder="Enter phone number"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                maxLength={15}
+                maxLength={10}
                 autoFocus
+                onBlur={() => setPhoneTouched(true)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -188,6 +194,11 @@ export const CustomerStartModal = ({
                   }
                 }}
               />
+              {showPhoneError ? (
+                <Text mt={1} fontSize="xs" color="red.500">
+                  Invalid phone number. Enter exactly 10 digits.
+                </Text>
+              ) : null}
             </FormControl>
 
             <Box minH="56px">
@@ -197,7 +208,7 @@ export const CustomerStartModal = ({
                 </Text>
               ) : null}
 
-              {!isSearching && normalizedPhone.length >= 10 && !searchResults.length ? (
+              {!isSearching && normalizedPhone.length === 10 && !searchResults.length ? (
                 <Text fontSize="sm" color="#6F5A50">
                   No existing customer found for this number.
                 </Text>
@@ -247,13 +258,13 @@ export const CustomerStartModal = ({
           <Button variant="outline" mr={2} onClick={onClose}>
             Close
           </Button>
-          <Button
-            onClick={() => void handleStart()}
-            isLoading={isSubmitting}
-            isDisabled={!normalizedPhone || (!exactMatch && !canCreate)}
-          >
-            {exactMatch ? "Start Order" : "Create & Start"}
-          </Button>
+            <Button
+              onClick={() => void handleStart()}
+              isLoading={isSubmitting}
+              isDisabled={!isValidPhone || (!exactMatch && !canCreate)}
+            >
+              {exactMatch ? "Start Order" : "Create & Start"}
+            </Button>
         </ModalFooter>
       </ModalContent>
     </Modal>

@@ -235,14 +235,12 @@ export const PosProvider = ({ children }: PropsWithChildren) => {
   }, [refreshClosingStatus]);
 
   const refreshShiftStatus = useCallback(async () => {
-    const today = new Date().toISOString().slice(0, 10);
     try {
       const response = await attendanceService.getMyRecords({
-        date: today,
         page: 1,
-        limit: 25
+        limit: 1
       });
-      const hasOpenShift = response.data.records.some((record) => record.status === "punched_in");
+      const hasOpenShift = response.data.summary.currentlyPunchedIn > 0;
       setIsPunchedIn(hasOpenShift);
     } catch {
       setIsPunchedIn(null);

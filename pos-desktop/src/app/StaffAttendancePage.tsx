@@ -71,10 +71,8 @@ export const StaffAttendancePage = () => {
     setUsername(session?.username ?? "");
   }, [session?.username]);
 
-  const hasOpenSession = useMemo(
-    () => (typeof isPunchedIn === "boolean" ? isPunchedIn : records.some((record) => record.status === "punched_in")),
-    [isPunchedIn, records]
-  );
+  const hasOpenSession = isPunchedIn === true;
+  const isShiftStateKnown = typeof isPunchedIn === "boolean";
 
   const attendanceColumns = useMemo<PosTableColumn<AttendanceRecord>[]>(
     () => [
@@ -163,6 +161,15 @@ export const StaffAttendancePage = () => {
   }, [dateFilter, limit]);
 
   const submitPunch = async () => {
+    if (!isShiftStateKnown) {
+      toast({
+        status: "warning",
+        title: "Unable to verify shift state",
+        description: "Refresh once and try again."
+      });
+      return;
+    }
+
     if (!username.trim() || !password) {
       toast({
         status: "warning",
@@ -269,12 +276,12 @@ export const StaffAttendancePage = () => {
               py={1.5}
               borderRadius="full"
               display="inline-flex"
-              bg={hasOpenSession ? "green.100" : "orange.100"}
-              color={hasOpenSession ? "green.700" : "#8A5400"}
+              bg={isShiftStateKnown ? (hasOpenSession ? "green.100" : "orange.100") : "gray.100"}
+              color={isShiftStateKnown ? (hasOpenSession ? "green.700" : "#8A5400") : "gray.700"}
               fontWeight={700}
               fontSize="sm"
             >
-              {hasOpenSession ? "Punched In" : "Punched Out"}
+              {isShiftStateKnown ? (hasOpenSession ? "Punched In" : "Punched Out") : "Checking"}
             </Box>
           </Box>
           <Box alignSelf="end">
@@ -293,6 +300,7 @@ export const StaffAttendancePage = () => {
               }}
               isLoading={actionLoading}
               loadingText={hasOpenSession ? "Punching out..." : "Punching in..."}
+              isDisabled={!isShiftStateKnown}
               onClick={() => void submitPunch()}
             >
               {hasOpenSession ? "Punch Out" : "Punch In"}

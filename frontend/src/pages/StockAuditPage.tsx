@@ -208,6 +208,18 @@ export const StockAuditPage = () => {
     []
   );
 
+  const totalReports = data?.stats.totalReports ?? 0;
+  const staffSubmitted = data?.stats.staffSubmitted ?? 0;
+  const totalIngredients = data?.stats.totalIngredients ?? 0;
+  const mismatchedIngredients = data?.stats.mismatchedIngredients ?? 0;
+  const matchedIngredients = data?.stats.matchedIngredients ?? 0;
+  const balancedReports = useMemo(
+    () => (data?.reports ?? []).filter((report) => Math.abs(report.totalVariance) <= 0.0001).length,
+    [data?.reports]
+  );
+  const mismatchRate = totalIngredients > 0 ? (mismatchedIngredients / totalIngredients) * 100 : 0;
+  const matchRate = totalIngredients > 0 ? (matchedIngredients / totalIngredients) * 100 : 0;
+
   return (
     <VStack align="stretch" spacing={6}>
       <PageHeader
@@ -280,7 +292,7 @@ export const StockAuditPage = () => {
             Reports
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
-            {data?.stats.totalReports ?? 0}
+            {totalReports}
           </Text>
         </AppCard>
         <AppCard>
@@ -288,23 +300,29 @@ export const StockAuditPage = () => {
             Staff Submitted
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
-            {data?.stats.staffSubmitted ?? 0}
+            {staffSubmitted}
           </Text>
         </AppCard>
         <AppCard>
           <Text color="#725D53" fontSize="sm">
-            Expected Remaining
+            Ingredients Audited
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
-            {`${formatQuantity(data?.stats.totalExpectedRemaining ?? 0)} (mixed units)`}
+            {totalIngredients}
+          </Text>
+          <Text mt={1} fontSize="xs" color="#6D584E">
+            Mismatch rows: {mismatchedIngredients}
           </Text>
         </AppCard>
         <AppCard>
           <Text color="#725D53" fontSize="sm">
-            Reported Remaining
+            Audit Accuracy
           </Text>
           <Text mt={1} fontSize="2xl" fontWeight={900}>
-            {`${formatQuantity(data?.stats.totalReportedRemaining ?? 0)} (mixed units)`}
+            {`${formatQuantity(matchRate)}%`}
+          </Text>
+          <Text mt={1} fontSize="xs" color="#6D584E">
+            Balanced reports: {balancedReports}
           </Text>
         </AppCard>
       </SimpleGrid>
@@ -314,15 +332,15 @@ export const StockAuditPage = () => {
           <VStack align="start" spacing={0}>
             <Text fontWeight={800}>Audit Health</Text>
             <Text fontSize="sm" color="#6D584E">
-              Absolute variance: {`${formatQuantity(data?.stats.totalVarianceAbs ?? 0)} (mixed units)`}
+              Match rate: {`${formatQuantity(matchRate)}%`} | Mismatch rate: {`${formatQuantity(mismatchRate)}%`}
             </Text>
           </VStack>
           <HStack spacing={2}>
             <Badge colorScheme="red" borderRadius="full" px={3} py={1}>
-              Mismatch {data?.stats.mismatchedIngredients ?? 0}
+              Mismatch {mismatchedIngredients}
             </Badge>
             <Badge colorScheme="green" borderRadius="full" px={3} py={1}>
-              Matched {data?.stats.matchedIngredients ?? 0}
+              Matched {matchedIngredients}
             </Badge>
           </HStack>
         </HStack>

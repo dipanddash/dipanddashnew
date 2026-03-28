@@ -762,7 +762,7 @@ class PosStorage {
         created_at: string;
         updated_at: string;
       }>(
-        "SELECT * FROM orders_local WHERE status = 'pending' AND kitchen_status != 'not_sent' ORDER BY updated_at DESC LIMIT ?",
+        "SELECT * FROM orders_local WHERE status = 'pending' AND kitchen_status IN ('queued', 'preparing', 'ready') ORDER BY updated_at DESC LIMIT ?",
         [limit]
       );
 
@@ -804,7 +804,7 @@ class PosStorage {
     }
 
     return [...this.state.orders]
-      .filter((order) => order.status === "pending" && order.kitchenStatus !== "not_sent")
+      .filter((order) => order.status === "pending" && ["queued", "preparing", "ready"].includes(order.kitchenStatus))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, limit)
       .map((row) => normalizeOrderRow(row));

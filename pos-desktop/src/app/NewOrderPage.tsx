@@ -149,6 +149,21 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
   );
 
   useEffect(() => {
+    const hasActiveDraft = Boolean(currentOrder.customer) || currentOrder.lines.length > 0;
+    const isLegacyDineOrTakeawayDraft =
+      currentOrder.orderChannel === null &&
+      (resolvedOrderChannel === "dine-in" || resolvedOrderChannel === "take-away") &&
+      currentOrder.orderType === resolvedOrderType;
+    const isSameChannelDraft =
+      resolvedOrderType !== null &&
+      currentOrder.orderType === resolvedOrderType &&
+      (currentOrder.orderChannel === resolvedOrderChannel || isLegacyDineOrTakeawayDraft);
+
+    if (hasActiveDraft && isSameChannelDraft) {
+      setIsOrderFlowActive(true);
+      return;
+    }
+
     clearOrder();
     if (resolvedOrderType) {
       setOrderType(resolvedOrderType);
@@ -158,6 +173,10 @@ export const NewOrderPage = ({ channel }: NewOrderPageProps) => {
   }, [
     channel,
     clearOrder,
+    currentOrder.customer,
+    currentOrder.lines.length,
+    currentOrder.orderChannel,
+    currentOrder.orderType,
     resolvedOrderType,
     resolvedOrderChannel,
     setOrderChannel,

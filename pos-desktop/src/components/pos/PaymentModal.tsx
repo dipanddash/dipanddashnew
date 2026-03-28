@@ -44,9 +44,15 @@ export const PaymentModal = ({ isOpen, totalAmount, onClose, onConfirm }: Paymen
     () => roundMoney(Math.max(roundedReceived - roundedTotal, 0)),
     [roundedReceived, roundedTotal]
   );
+  const requiresReference = mode === "card" || mode === "upi";
+  const hasValidReference = referenceNo.trim().length > 0;
+  const showReferenceError = requiresReference && !hasValidReference;
 
   const handleConfirm = async () => {
     if (mode === "cash" && roundedReceived < roundedTotal) {
+      return;
+    }
+    if (requiresReference && !hasValidReference) {
       return;
     }
     setIsSubmitting(true);
@@ -54,7 +60,7 @@ export const PaymentModal = ({ isOpen, totalAmount, onClose, onConfirm }: Paymen
       await onConfirm({
         mode,
         receivedAmount: mode === "cash" ? roundedReceived : undefined,
-        referenceNo: mode === "cash" ? undefined : referenceNo || undefined
+        referenceNo: mode === "cash" ? undefined : referenceNo.trim()
       });
       onClose();
       setMode("cash");
@@ -79,7 +85,12 @@ export const PaymentModal = ({ isOpen, totalAmount, onClose, onConfirm }: Paymen
 
             <FormControl>
               <FormLabel>Payment Mode</FormLabel>
-              <RadioGroup value={mode} onChange={(value) => setMode(value as PaymentMode)}>
+              <RadioGroup
+                value={mode}
+                onChange={(value) => {
+                  setMode(value as PaymentMode);
+                }}
+              >
                 <HStack spacing={4}>
                   <Radio value="cash">Cash</Radio>
                   <Radio value="card">Card</Radio>
@@ -106,13 +117,18 @@ export const PaymentModal = ({ isOpen, totalAmount, onClose, onConfirm }: Paymen
                 ) : null}
               </FormControl>
             ) : (
-              <FormControl>
-                <FormLabel>Reference ID (optional)</FormLabel>
+              <FormControl isInvalid={showReferenceError}>
+                <FormLabel>Reference ID (required)</FormLabel>
                 <Input
                   value={referenceNo}
                   onChange={(event) => setReferenceNo(event.target.value)}
                   placeholder="Txn reference"
                 />
+                {showReferenceError ? (
+                  <Text mt={1} fontSize="xs" color="red.500">
+                    Reference ID is required for Card and UPI payments.
+                  </Text>
+                ) : null}
               </FormControl>
             )}
           </VStack>
@@ -121,13 +137,13 @@ export const PaymentModal = ({ isOpen, totalAmount, onClose, onConfirm }: Paymen
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            onClick={() => void handleConfirm()}
-            isLoading={isSubmitting}
-            isDisabled={mode === "cash" && roundedReceived < roundedTotal}
-          >
-            Confirm Payment
-          </Button>
+            <Button
+              onClick={() => void handleConfirm()}
+              isLoading={isSubmitting}
+              isDisabled={(mode === "cash" && roundedReceived < roundedTotal) || (requiresReference && !hasValidReference)}
+            >
+              Confirm Payment
+            </Button>
         </ModalFooter>
       </ModalContent>
     </Modal>

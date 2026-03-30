@@ -6,7 +6,7 @@ import {
   VStack
 } from "@chakra-ui/react";
 import { Download, FileBarChart2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -98,6 +98,7 @@ export const ReportsPage = () => {
   const [stockExportLoading, setStockExportLoading] = useState<"excel" | "pdf" | null>(null);
   const [reportData, setReportData] = useState<GeneratedReportResponse | null>(null);
   const [hasGenerated, setHasGenerated] = useState(false);
+  const hasAutoSelectedInitialReport = useRef(false);
 
   const selectedReport = useMemo(
     () => catalog.find((item) => item.key === selectedReportKey) ?? null,
@@ -111,15 +112,25 @@ export const ReportsPage = () => {
       const response = await reportsService.getCatalog();
       const reports = response.data.reports;
       setCatalog(reports);
-      if (reports.length && !selectedReportKey) {
-        setSelectedReportKey(reports[0].key);
-      }
+      setSelectedReportKey((current) => {
+        if (!reports.length) {
+          return "";
+        }
+        if (current && reports.some((report) => report.key === current)) {
+          return current;
+        }
+        if (!current && !hasAutoSelectedInitialReport.current) {
+          hasAutoSelectedInitialReport.current = true;
+          return reports[0].key;
+        }
+        return current;
+      });
     } catch (err) {
       toast.error(extractErrorMessage(err, "Unable to fetch reports catalog"));
     } finally {
       setLoading(false);
     }
-  }, [selectedReportKey, toast]);
+  }, [toast]);
 
   useEffect(() => {
     void fetchCatalog();
@@ -178,7 +189,6 @@ export const ReportsPage = () => {
       catalog.map((report) => ({
         label: report.title,
         value: report.key,
-        description: report.description,
         searchText: `${report.title} ${report.key} ${report.category}`
       })),
     [catalog]
@@ -260,18 +270,23 @@ export const ReportsPage = () => {
           search: search || undefined
         });
 
-        const blob = new Blob([response.data], { type: response.headers["content-type"] ?? "application/octet-stream" });
+        const defaultMime = format === "excel" ? "text/csv;charset=utf-8;" : "application/pdf";
+        const blob = new Blob([response.data], { type: response.headers["content-type"] ?? defaultMime });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
-        anchor.download =
-          extractFileNameFromDisposition(response.headers["content-disposition"]) ??
-          `stock_consumption_${dateFrom}_${dateTo}.${format === "excel" ? "xls" : "pdf"}`;
+        const fallbackName = `stock_consumption_${dateFrom}_${dateTo}.${format === "excel" ? "csv" : "pdf"}`;
+        const extractedName = extractFileNameFromDisposition(response.headers["content-disposition"]);
+        let downloadName = extractedName ?? fallbackName;
+        if (format === "excel") {
+          downloadName = downloadName.replace(/\.(xlsx?|csv)$/i, "") + ".csv";
+        }
+        anchor.download = downloadName;
         anchor.click();
         URL.revokeObjectURL(url);
-        toast.success(`Stock consumption ${format.toUpperCase()} downloaded successfully.`);
+        toast.success(`Stock consumption ${format === "excel" ? "CSV" : "PDF"} downloaded successfully.`);
       } catch (err) {
-        toast.error(extractErrorMessage(err, `Unable to download ${format.toUpperCase()}`));
+        toast.error(extractErrorMessage(err, `Unable to download ${format === "excel" ? "CSV" : "PDF"}`));
       } finally {
         setStockExportLoading(null);
       }
@@ -302,7 +317,7 @@ export const ReportsPage = () => {
                   onClick={() => void handleStockExport("excel")}
                   isLoading={stockExportLoading === "excel"}
                 >
-                  Export Excel
+                  Export CSV
                 </AppButton>
                 <AppButton
                   variant="outline"

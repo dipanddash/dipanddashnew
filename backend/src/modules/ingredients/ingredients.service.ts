@@ -14,6 +14,10 @@ import { InvoiceUsageEvent } from "../invoices/invoice-usage-event.entity";
 import { PosBillingControl } from "./pos-billing-control.entity";
 import { StaffClosingReport } from "./staff-closing-report.entity";
 import { UserRole } from "../../constants/roles";
+import {
+  getIngredientValuationMapFromCurrentStock,
+  getLatestIngredientPurchasePriceMap
+} from "../procurement/ingredient-costing";
 
 type PaginationQuery = {
   page: number;
@@ -29,6 +33,7 @@ type IngredientListFilters = PaginationQuery & {
   search?: string;
   categoryId?: string;
   includeInactive?: boolean;
+  withMovementStats?: boolean;
 };
 
 type AllocationListFilters = PaginationQuery & {
@@ -365,18 +370,70 @@ export class IngredientsService {
     const ingredients = await query.offset(offset).limit(limit).getMany();
 
     const ingredientIds = ingredients.map((ingredient) => ingredient.id);
-    const stocks = ingredientIds.length
-      ? await this.stockRepository.find({
-          where: { ingredientId: In(ingredientIds) }
-        })
-      : [];
+    const [stocks, usageRows, dumpRows] = ingredientIds.length
+      ? await Promise.all([
+          this.stockRepository.find({
+            where: { ingredientId: In(ingredientIds) }
+          }),
+          filters.withMovementStats
+            ? this.usageEventRepository
+                .createQueryBuilder("event")
+                .select("event.ingredientId", "ingredientId")
+                .addSelect("SUM(event.consumedQuantity + COALESCE(event.overusedQuantity, 0))", "usedQuantity")
+                .where("event.ingredientId IN (:...ingredientIds)", { ingredientIds })
+                .groupBy("event.ingredientId")
+                .getRawMany<{ ingredientId: string; usedQuantity: string }>()
+            : Promise.resolve([]),
+          filters.withMovementStats
+            ? AppDataSource.query(
+                `
+                  SELECT
+                    COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text) AS "ingredientId",
+                    SUM(
+                      CASE
+                        WHEN COALESCE(impact->>'quantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (impact->>'quantity')::numeric
+                        WHEN COALESCE(impact->>'baseQuantity', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (impact->>'baseQuantity')::numeric
+                        ELSE COALESCE(dump."baseQuantity", 0)::numeric
+                      END
+                    ) AS "dumpQuantity"
+                  FROM "dump_entries" dump
+                  LEFT JOIN LATERAL jsonb_array_elements(
+                    CASE
+                      WHEN jsonb_typeof(dump."ingredientImpacts") = 'array' THEN dump."ingredientImpacts"
+                      ELSE '[]'::jsonb
+                    END
+                  ) impact ON TRUE
+                  WHERE COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text) = ANY($1::text[])
+                  GROUP BY COALESCE(NULLIF((impact->>'ingredientId'), ''), dump."ingredientId"::text)
+                `,
+                [ingredientIds]
+              )
+            : Promise.resolve([])
+        ])
+      : [[], [], []];
 
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, getNumericValue(stock.totalStock)]));
+    const fallbackPriceMap = new Map(ingredients.map((ingredient) => [ingredient.id, getNumericValue(ingredient.perUnitPrice)]));
+    const latestPriceMap = await getLatestIngredientPurchasePriceMap(ingredientIds, fallbackPriceMap);
+    const usageMap = new Map(
+      (usageRows as Array<{ ingredientId: string; usedQuantity: string }>).map((row) => [
+        row.ingredientId,
+        getNumericValue(row.usedQuantity)
+      ])
+    );
+    const dumpMap = new Map(
+      (dumpRows as Array<{ ingredientId: string; dumpQuantity: string }>).map((row) => [
+        row.ingredientId,
+        getNumericValue(row.dumpQuantity)
+      ])
+    );
 
     return {
       ingredients: ingredients.map((ingredient) => {
         const totalStock = toFixedQuantity(stockMap.get(ingredient.id) ?? 0);
         const minStock = toFixedQuantity(getNumericValue(ingredient.minStock));
+        const staffUsedQuantity = toFixedQuantity(usageMap.get(ingredient.id) ?? 0);
+        const dumpQuantity = toFixedQuantity(dumpMap.get(ingredient.id) ?? 0);
 
         return {
           id: ingredient.id,
@@ -384,9 +441,13 @@ export class IngredientsService {
           categoryId: ingredient.categoryId,
           categoryName: ingredient.category.name,
           unit: ingredient.unit,
-          perUnitPrice: toFixedQuantity(getNumericValue(ingredient.perUnitPrice)),
+          perUnitPrice: toFixedQuantity(
+            latestPriceMap.get(ingredient.id) ?? getNumericValue(ingredient.perUnitPrice)
+          ),
           minStock,
           totalStock,
+          staffUsedQuantity,
+          dumpQuantity,
           isActive: ingredient.isActive,
           status: getStockStatus(totalStock, minStock),
           createdAt: ingredient.createdAt,
@@ -401,7 +462,7 @@ export class IngredientsService {
     name: string;
     categoryId: string;
     unit: IngredientUnit;
-    perUnitPrice: number;
+    perUnitPrice?: number;
     minStock: number;
     currentStock?: number;
   }) {
@@ -421,7 +482,7 @@ export class IngredientsService {
       name: normalizedName,
       categoryId: payload.categoryId,
       unit: payload.unit,
-      perUnitPrice: toFixedQuantity(payload.perUnitPrice),
+      perUnitPrice: toFixedQuantity(payload.perUnitPrice ?? 0),
       minStock: toFixedQuantity(payload.minStock),
       isActive: true
     });
@@ -580,8 +641,16 @@ export class IngredientsService {
 
     const totalStock = toFixedQuantity(getNumericValue(stock.totalStock));
     const minStock = toFixedQuantity(getNumericValue(ingredient.minStock));
-    const perUnitPrice = toFixedQuantity(getNumericValue(ingredient.perUnitPrice));
-    const totalValuation = toFixedQuantity(totalStock * perUnitPrice);
+    const fallbackPriceMap = new Map([[ingredientId, getNumericValue(ingredient.perUnitPrice)]]);
+    const stockMap = new Map([[ingredientId, totalStock]]);
+    const latestPriceMap = await getLatestIngredientPurchasePriceMap([ingredientId], fallbackPriceMap);
+    const valuationMap = await getIngredientValuationMapFromCurrentStock({
+      ingredientIds: [ingredientId],
+      stockByIngredient: stockMap,
+      fallbackPriceByIngredient: fallbackPriceMap
+    });
+    const perUnitPrice = toFixedQuantity(latestPriceMap.get(ingredientId) ?? getNumericValue(ingredient.perUnitPrice));
+    const totalValuation = toFixedQuantity(valuationMap.get(ingredientId) ?? totalStock * perUnitPrice);
 
     return {
       stock: {
@@ -876,6 +945,12 @@ export class IngredientsService {
     ]);
 
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, getNumericValue(stock.totalStock)]));
+    const fallbackPriceMap = new Map(ingredients.map((ingredient) => [ingredient.id, getNumericValue(ingredient.perUnitPrice)]));
+    const valuationMap = await getIngredientValuationMapFromCurrentStock({
+      ingredientIds,
+      stockByIngredient: stockMap,
+      fallbackPriceByIngredient: fallbackPriceMap
+    });
     const allocationTotalsMap = new Map(
       allocationTotalsRows.map((row) => [
         row.ingredientId,
@@ -937,7 +1012,9 @@ export class IngredientsService {
       const allocatedQuantity = toFixedQuantity(allocationTotals?.allocatedQuantity ?? 0);
       const remainingQuantity = toFixedQuantity(Math.max(allocatedQuantity - usedQuantity, 0));
       const overusedQuantity = toFixedQuantity(usageMap.get(ingredient.id)?.overusedQuantity ?? 0);
-      const valuation = toFixedQuantity(stockValue * getNumericValue(ingredient.perUnitPrice));
+      const valuation = toFixedQuantity(
+        valuationMap.get(ingredient.id) ?? stockValue * getNumericValue(ingredient.perUnitPrice)
+      );
 
       if (allocatedQuantity > 0) {
         allocatedIngredients += 1;
@@ -1545,9 +1622,58 @@ export class IngredientsService {
       [rangeFrom, rangeTo]
     );
 
+    const transferRows = await AppDataSource.query(
+      `
+      SELECT
+        transfer."transferDate" AS "date",
+        movement."ingredientId" AS "ingredientId",
+        SUM(
+          CASE
+            WHEN transfer."toOutletId" IS NOT NULL THEN movement."quantity"
+            ELSE 0
+          END
+        ) AS "transferredIn",
+        SUM(
+          CASE
+            WHEN transfer."fromOutletId" IS NOT NULL THEN movement."quantity"
+            ELSE 0
+          END
+        ) AS "transferredOut"
+      FROM "outlet_transfers" transfer
+      JOIN LATERAL (
+        SELECT
+          NULLIF(line->>'sourceId', '') AS "ingredientId",
+          COALESCE(NULLIF(line->>'quantity', ''), '0')::numeric AS "quantity"
+        FROM jsonb_array_elements(transfer."lines") line
+        WHERE line->>'lineType' = 'ingredient'
+
+        UNION ALL
+
+        SELECT
+          NULLIF(impact->>'ingredientId', '') AS "ingredientId",
+          COALESCE(NULLIF(impact->>'quantity', ''), '0')::numeric AS "quantity"
+        FROM jsonb_array_elements(transfer."lines") line
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(line->'impacts') = 'array' THEN line->'impacts'
+            ELSE '[]'::jsonb
+          END
+        ) impact
+        WHERE line->>'lineType' = 'item'
+      ) movement ON TRUE
+      WHERE transfer."transferDate" >= $1
+        AND transfer."transferDate" <= $2
+        AND movement."ingredientId" IS NOT NULL
+      GROUP BY transfer."transferDate", movement."ingredientId"
+      `,
+      [rangeFrom, rangeTo]
+    );
+
     const movementKey = (ingredientId: string, date: string) => `${ingredientId}::${date}`;
     const purchaseByKey = new Map<string, number>();
     const dumpByKey = new Map<string, number>();
+    const transferInByKey = new Map<string, number>();
+    const transferOutByKey = new Map<string, number>();
 
     (purchaseRows as Array<Record<string, unknown>>).forEach((row) => {
       const ingredientId = String(row.ingredientId ?? "");
@@ -1573,6 +1699,22 @@ export class IngredientsService {
       );
     });
 
+    (transferRows as Array<Record<string, unknown>>).forEach((row) => {
+      const ingredientId = String(row.ingredientId ?? "");
+      const date = String(row.date ?? "");
+      if (!ingredientId || !date) {
+        return;
+      }
+      transferInByKey.set(
+        movementKey(ingredientId, date),
+        toFixedQuantity(getNumericValue(row.transferredIn as string | number | null | undefined))
+      );
+      transferOutByKey.set(
+        movementKey(ingredientId, date),
+        toFixedQuantity(getNumericValue(row.transferredOut as string | number | null | undefined))
+      );
+    });
+
     const flattenedItems = reports.flatMap((report) =>
       (report.items ?? []).map((item) => ({
         reportItemId: `${report.id}-${item.ingredientId}`,
@@ -1587,6 +1729,12 @@ export class IngredientsService {
         openingStockQuantity: toFixedQuantity(getNumericValue(item.allocatedQuantity)),
         purchaseStockQuantity: toFixedQuantity(
           purchaseByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0
+        ),
+        transferredInQuantity: toFixedQuantity(
+          transferInByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0
+        ),
+        transferredOutQuantity: toFixedQuantity(
+          transferOutByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0
         ),
         consumptionQuantity: toFixedQuantity(getNumericValue(item.usedQuantity)),
         dumpQuantity: toFixedQuantity(dumpByKey.get(movementKey(item.ingredientId, report.reportDate)) ?? 0),
@@ -1620,6 +1768,12 @@ export class IngredientsService {
     );
     const totalDumpStock = toFixedQuantity(
       flattenedItems.reduce((sum, item) => sum + item.dumpQuantity, 0)
+    );
+    const totalTransferInStock = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.transferredInQuantity, 0)
+    );
+    const totalTransferOutStock = toFixedQuantity(
+      flattenedItems.reduce((sum, item) => sum + item.transferredOutQuantity, 0)
     );
     const mismatchedIngredients = flattenedItems.filter((item) => item.isMismatch).length;
     const uniqueStaff = new Set(reports.map((report) => report.staffId));
@@ -1663,6 +1817,8 @@ export class IngredientsService {
         totalPurchaseStock,
         totalConsumptionStock,
         totalDumpStock,
+        totalTransferInStock,
+        totalTransferOutStock,
         totalUnallocatedStock,
         ingredientsWithUnallocated
       },

@@ -59,6 +59,7 @@ export const ingredientsService = {
     search?: string;
     categoryId?: string;
     includeInactive?: boolean;
+    withMovementStats?: boolean;
     page?: number;
     limit?: number;
   }) => {
@@ -69,9 +70,9 @@ export const ingredientsService = {
     name: string;
     categoryId: string;
     unit: IngredientUnit;
-    perUnitPrice: number;
+    perUnitPrice?: number;
     minStock: number;
-    currentStock: number;
+    currentStock?: number;
   }) => {
     const response = await apiClient.post<ApiSuccess<{ ingredient: IngredientListItem }>>("/ingredients", payload);
     return response.data;

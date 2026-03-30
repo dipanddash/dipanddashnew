@@ -13,6 +13,7 @@ import { ItemCategory } from "./item-category.entity";
 import { Item } from "./item.entity";
 import { ItemIngredient } from "./item-ingredient.entity";
 import { UNIT_META, convertIngredientQuantity } from "./items.units";
+import { getLatestIngredientPurchasePriceMap } from "../procurement/ingredient-costing";
 
 type PaginationQuery = {
   page: number;
@@ -264,6 +265,10 @@ export class ItemsService {
     }
 
     const ingredientMap = new Map(ingredientEntities.map((ingredient) => [ingredient.id, ingredient]));
+    const fallbackPriceMap = new Map(
+      ingredientEntities.map((ingredient) => [ingredient.id, getNumericValue(ingredient.perUnitPrice)])
+    );
+    const latestPriceMap = await getLatestIngredientPurchasePriceMap(ingredientIds, fallbackPriceMap);
     let totalEstimatedCost = 0;
 
     const rows = payloadIngredients.map((row) => {
@@ -277,7 +282,7 @@ export class ItemsService {
         throw new AppError(422, "Selected unit is not compatible with the ingredient base unit");
       }
 
-      const perUnitPrice = getNumericValue(ingredient.perUnitPrice);
+      const perUnitPrice = latestPriceMap.get(ingredient.id) ?? getNumericValue(ingredient.perUnitPrice);
       const costContribution = toFixed(normalizedQuantity * perUnitPrice);
       totalEstimatedCost += costContribution;
 
@@ -1100,6 +1105,8 @@ export class ItemsService {
       : [];
 
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, toFixed(getNumericValue(stock.totalStock))]));
+    const fallbackPriceMap = new Map(ingredients.map((ingredient) => [ingredient.id, getNumericValue(ingredient.perUnitPrice)]));
+    const latestPriceMap = await getLatestIngredientPurchasePriceMap(ingredientIds, fallbackPriceMap);
 
     return ingredients.map((ingredient) => ({
       id: ingredient.id,
@@ -1107,7 +1114,7 @@ export class ItemsService {
       categoryId: ingredient.categoryId,
       categoryName: ingredient.category.name,
       unit: ingredient.unit,
-      perUnitPrice: toFixed(getNumericValue(ingredient.perUnitPrice)),
+      perUnitPrice: toFixed(latestPriceMap.get(ingredient.id) ?? getNumericValue(ingredient.perUnitPrice)),
       minStock: toFixed(getNumericValue(ingredient.minStock)),
       totalStock: stockMap.get(ingredient.id) ?? 0
     }));

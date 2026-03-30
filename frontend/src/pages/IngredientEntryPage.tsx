@@ -33,6 +33,7 @@ import { StockDetailsModal } from "@/features/ingredients/components/StockDetail
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAppToast } from "@/hooks/useAppToast";
 import { ingredientsService } from "@/services/ingredients.service";
+import { reportsService } from "@/services/reports.service";
 import type {
   IngredientCategory,
   IngredientAllocationStats,
@@ -50,6 +51,49 @@ const defaultPagination: PaginationData = {
   limit: 5,
   total: 0,
   totalPages: 1
+};
+
+type IngredientDayLedgerRow = {
+  id: string;
+  date: string;
+  ingredient: string;
+  unit: string;
+  openingStock: number;
+  purchase: number;
+  dump: number;
+  consumption: number;
+  transferredIn: number;
+  transferredOut: number;
+  totalStock: number;
+  stockHealth: "HEALTHY" | "LOW_STOCK";
+};
+
+const toNumberValue = (value: string | number | null | undefined) => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const toDateInputValue = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getDefaultLedgerRange = () => {
+  const toDate = new Date();
+  const fromDate = new Date(toDate);
+  fromDate.setDate(fromDate.getDate() - 6);
+  return {
+    from: toDateInputValue(fromDate),
+    to: toDateInputValue(toDate)
+  };
 };
 
 const PaginationControls = ({
@@ -98,8 +142,24 @@ const statusBadge = (status: "LOW_STOCK" | "OK") => (
   </Box>
 );
 
+const stockHealthBadge = (status: "HEALTHY" | "LOW_STOCK") => (
+  <Box
+    px={3}
+    py={1}
+    borderRadius="full"
+    fontSize="xs"
+    fontWeight={700}
+    bg={status === "LOW_STOCK" ? "red.100" : "green.100"}
+    color={status === "LOW_STOCK" ? "red.700" : "green.700"}
+    w="fit-content"
+  >
+    {status === "LOW_STOCK" ? "Low Stock" : "Healthy"}
+  </Box>
+);
+
 export const IngredientEntryPage = () => {
   const toast = useAppToast();
+  const defaultLedgerRange = useMemo(() => getDefaultLedgerRange(), []);
 
   const [allCategories, setAllCategories] = useState<IngredientCategory[]>([]);
 
@@ -134,16 +194,17 @@ export const IngredientEntryPage = () => {
   const [stockDetails, setStockDetails] = useState<IngredientStockDetails | null>(null);
   const [stockLogs, setStockLogs] = useState<IngredientStockLog[]>([]);
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, boolean>>({});
-  const [statsRows, setStatsRows] = useState<IngredientListItem[]>([]);
-  const [statsPagination, setStatsPagination] = useState<PaginationData>(defaultPagination);
-  const [statsLoading, setStatsLoading] = useState(true);
-  const [statsSearch, setStatsSearch] = useState("");
-  const debouncedStatsSearch = useDebouncedValue(statsSearch, 400);
-  const [statsCategoryFilter, setStatsCategoryFilter] = useState("");
-  const [statsPage, setStatsPage] = useState(1);
-  const [statsLimit, setStatsLimit] = useState(8);
   const [stockInsights, setStockInsights] = useState<IngredientAllocationStats | null>(null);
   const [stockInsightsLoading, setStockInsightsLoading] = useState(true);
+  const [ledgerRows, setLedgerRows] = useState<IngredientDayLedgerRow[]>([]);
+  const [ledgerPagination, setLedgerPagination] = useState<PaginationData>(defaultPagination);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const debouncedLedgerSearch = useDebouncedValue(ledgerSearch, 400);
+  const [ledgerDateFrom, setLedgerDateFrom] = useState(defaultLedgerRange.from);
+  const [ledgerDateTo, setLedgerDateTo] = useState(defaultLedgerRange.to);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerLimit, setLedgerLimit] = useState(12);
 
   const fetchCategoryOptions = useCallback(async () => {
     try {
@@ -202,39 +263,60 @@ export const IngredientEntryPage = () => {
     }
   }, [debouncedIngredientSearch, ingredientCategoryFilter, ingredientLimit, ingredientPage, toast]);
 
-  const fetchStatsRows = useCallback(async () => {
-    setStatsLoading(true);
-    try {
-      const response = await ingredientsService.getIngredients({
-        search: debouncedStatsSearch || undefined,
-        categoryId: statsCategoryFilter || undefined,
-        includeInactive: true,
-        page: statsPage,
-        limit: statsLimit
-      });
-      setStatsRows(response.data.ingredients);
-      setStatsPagination(response.data.pagination);
-    } catch (error) {
-      toast.error(extractErrorMessage(error, "Unable to fetch stock stats table."));
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [debouncedStatsSearch, statsCategoryFilter, statsLimit, statsPage, toast]);
-
   const fetchStockInsights = useCallback(async () => {
     setStockInsightsLoading(true);
     try {
-      const response = await ingredientsService.getAllocationStats({
-        search: debouncedStatsSearch || undefined,
-        categoryId: statsCategoryFilter || undefined
-      });
+      const response = await ingredientsService.getAllocationStats({});
       setStockInsights(response.data);
     } catch (error) {
       toast.error(extractErrorMessage(error, "Unable to fetch stock insights."));
     } finally {
       setStockInsightsLoading(false);
     }
-  }, [debouncedStatsSearch, statsCategoryFilter, toast]);
+  }, [toast]);
+
+  const fetchIngredientDayLedger = useCallback(async () => {
+    setLedgerLoading(true);
+    try {
+      const response = await reportsService.generate({
+        reportKey: "stock_consumption_report",
+        dateFrom: ledgerDateFrom,
+        dateTo: ledgerDateTo,
+        search: debouncedLedgerSearch || undefined,
+        page: ledgerPage,
+        limit: ledgerLimit
+      });
+
+      const parsedRows = response.data.rows.map((row, index) => {
+        const date = String(row.date ?? "");
+        const ingredient = String(row.ingredient ?? "-");
+        const unit = String(row.unit ?? "unit").toLowerCase();
+        const stockHealth: IngredientDayLedgerRow["stockHealth"] =
+          row.stockHealth === "LOW_STOCK" ? "LOW_STOCK" : "HEALTHY";
+        return {
+          id: `${date}-${ingredient}-${index}`,
+          date,
+          ingredient,
+          unit,
+          openingStock: toNumberValue(row.openingStock),
+          purchase: toNumberValue(row.purchase),
+          dump: toNumberValue(row.dump),
+          consumption: toNumberValue(row.consumption),
+          transferredIn: toNumberValue(row.transferredIn),
+          transferredOut: toNumberValue(row.transferredOut),
+          totalStock: toNumberValue(row.totalStock),
+          stockHealth
+        };
+      });
+
+      setLedgerRows(parsedRows);
+      setLedgerPagination(response.data.pagination);
+    } catch (error) {
+      toast.error(extractErrorMessage(error, "Unable to fetch day-wise ingredient stock ledger."));
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [debouncedLedgerSearch, ledgerDateFrom, ledgerDateTo, ledgerLimit, ledgerPage, toast]);
 
   useEffect(() => {
     void fetchCategoryOptions();
@@ -249,12 +331,12 @@ export const IngredientEntryPage = () => {
   }, [fetchIngredients]);
 
   useEffect(() => {
-    void fetchStatsRows();
-  }, [fetchStatsRows]);
-
-  useEffect(() => {
     void fetchStockInsights();
   }, [fetchStockInsights]);
+
+  useEffect(() => {
+    void fetchIngredientDayLedger();
+  }, [fetchIngredientDayLedger]);
 
   useEffect(() => {
     setCategoryPage(1);
@@ -265,8 +347,8 @@ export const IngredientEntryPage = () => {
   }, [debouncedIngredientSearch, ingredientCategoryFilter]);
 
   useEffect(() => {
-    setStatsPage(1);
-  }, [debouncedStatsSearch, statsCategoryFilter]);
+    setLedgerPage(1);
+  }, [debouncedLedgerSearch, ledgerDateFrom, ledgerDateTo]);
 
   const categoryOptions = useMemo(
     () => allCategories.map((category) => ({ label: category.name, value: category.id })),
@@ -324,24 +406,15 @@ export const IngredientEntryPage = () => {
       name: string;
       categoryId: string;
       unit: IngredientUnit;
-      perUnitPrice: number;
       minStock: number;
-      currentStock?: number;
     }) => {
       setIngredientMutationLoading(true);
       try {
-        const { currentStock, ...basePayload } = values;
         if (selectedIngredient) {
-          const response = await ingredientsService.updateIngredient(selectedIngredient.id, {
-            ...basePayload,
-            currentStock
-          });
+          const response = await ingredientsService.updateIngredient(selectedIngredient.id, values);
           toast.success(response.message);
         } else {
-          const response = await ingredientsService.createIngredient({
-            ...basePayload,
-            currentStock: currentStock ?? 0
-          });
+          const response = await ingredientsService.createIngredient(values);
           toast.success(response.message);
         }
 
@@ -588,58 +661,77 @@ export const IngredientEntryPage = () => {
     [deleteIngredientDialog, handleToggleIngredientStatus, ingredientModal, openStockDetails, rowActionLoading]
   );
 
-  const statsColumns = useMemo(
+  const dayLedgerColumns = useMemo(
     () =>
       [
         {
+          key: "date",
+          header: "Date",
+          render: (row: IngredientDayLedgerRow) => <Text fontWeight={700}>{row.date}</Text>
+        },
+        {
           key: "ingredient",
           header: "Ingredient",
-          render: (row: IngredientListItem) => (
+          render: (row: IngredientDayLedgerRow) => (
             <VStack align="start" spacing={0}>
-              <Text fontWeight={700}>{row.name}</Text>
+              <Text fontWeight={700}>{row.ingredient}</Text>
               <Text fontSize="sm" color="#6F5A50">
-                {row.categoryName} | {row.unit.toUpperCase()}
+                {row.unit.toUpperCase()}
               </Text>
             </VStack>
           )
         },
         {
+          key: "openingStock",
+          header: "Opening Stock",
+          render: (row: IngredientDayLedgerRow) => formatQuantityWithUnit(row.openingStock, row.unit)
+        },
+        {
+          key: "purchase",
+          header: "Purchase",
+          render: (row: IngredientDayLedgerRow) => (
+            <Text fontWeight={700} color={row.purchase > 0 ? "green.700" : "#2D1D17"}>
+              {formatQuantityWithUnit(row.purchase, row.unit)}
+            </Text>
+          )
+        },
+        {
+          key: "dump",
+          header: "Dump",
+          render: (row: IngredientDayLedgerRow) => (
+            <Text fontWeight={700} color={row.dump > 0 ? "red.700" : "#2D1D17"}>
+              {formatQuantityWithUnit(row.dump, row.unit)}
+            </Text>
+          )
+        },
+        {
+          key: "consumption",
+          header: "Consumption",
+          render: (row: IngredientDayLedgerRow) => formatQuantityWithUnit(row.consumption, row.unit)
+        },
+        {
+          key: "transferredIn",
+          header: "Transfer In",
+          render: (row: IngredientDayLedgerRow) => formatQuantityWithUnit(row.transferredIn, row.unit)
+        },
+        {
+          key: "transferredOut",
+          header: "Transfer Out",
+          render: (row: IngredientDayLedgerRow) => formatQuantityWithUnit(row.transferredOut, row.unit)
+        },
+        {
           key: "totalStock",
-          header: "Current Stock",
-          render: (row: IngredientListItem) => formatQuantityWithUnit(row.totalStock, row.unit)
+          header: "Remaining Stock",
+          render: (row: IngredientDayLedgerRow) => (
+            <Text fontWeight={800}>{formatQuantityWithUnit(row.totalStock, row.unit)}</Text>
+          )
         },
         {
-          key: "minStock",
-          header: "Min Stock",
-          render: (row: IngredientListItem) => formatQuantityWithUnit(row.minStock, row.unit)
-        },
-        {
-          key: "stockGap",
-          header: "Stock Gap",
-          render: (row: IngredientListItem) => {
-            const gap = Number((row.totalStock - row.minStock).toFixed(3));
-            const isDeficit = gap < 0;
-            return (
-              <Text fontWeight={700} color={isDeficit ? "red.700" : "green.700"}>
-                {isDeficit ? "-" : "+"}
-                {formatQuantityWithUnit(Math.abs(gap), row.unit)}
-              </Text>
-            );
-          }
-        },
-        {
-          key: "status",
-          header: "Status",
-          render: (row: IngredientListItem) =>
-            row.isActive ? (
-              statusBadge(row.status)
-            ) : (
-              <Box px={3} py={1} borderRadius="full" fontSize="xs" fontWeight={700} bg="gray.100" color="gray.700" w="fit-content">
-                Inactive
-              </Box>
-            )
+          key: "stockHealth",
+          header: "Stock Health",
+          render: (row: IngredientDayLedgerRow) => stockHealthBadge(row.stockHealth)
         }
-      ] as Array<{ key: string; header: string; render?: (row: IngredientListItem) => ReactNode }>,
+      ] as Array<{ key: string; header: string; render?: (row: IngredientDayLedgerRow) => ReactNode }>,
     []
   );
 
@@ -658,48 +750,60 @@ export const IngredientEntryPage = () => {
         </TabList>
         <TabPanels>
           <TabPanel px={0}>
-            <AppCard title="Stock Stats" subtitle="Useful ingredient stock insights for day-to-day decisions.">
+            <AppCard
+              title="Day-wise Ingredient Ledger"
+              subtitle="Track opening stock, purchase, dump, consumption, transfers, and remaining stock for each day."
+            >
               <VStack spacing={4} align="stretch">
-                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                <SimpleGrid columns={{ base: 1, md: 2, xl: 5 }} spacing={4}>
                   <AppInput
                     label="Search Ingredient"
-                    placeholder="Search ingredient for stats"
-                    value={statsSearch}
-                    onChange={(event) => setStatsSearch((event.target as HTMLInputElement).value)}
+                    placeholder="Filter ledger rows"
+                    value={ledgerSearch}
+                    onChange={(event) => setLedgerSearch((event.target as HTMLInputElement).value)}
+                  />
+                  <AppInput
+                    label="Date From"
+                    type="date"
+                    value={ledgerDateFrom}
+                    onChange={(event) => setLedgerDateFrom((event.target as HTMLInputElement).value)}
+                  />
+                  <AppInput
+                    label="Date To"
+                    type="date"
+                    value={ledgerDateTo}
+                    onChange={(event) => setLedgerDateTo((event.target as HTMLInputElement).value)}
                   />
                   <FormControl>
-                    <FormLabel>Category</FormLabel>
-                    <Select value={statsCategoryFilter} onChange={(event) => setStatsCategoryFilter(event.target.value)}>
-                      <option value="">All Categories</option>
-                      {categoryOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel>Records per page</FormLabel>
+                    <FormLabel>Rows per page</FormLabel>
                     <Select
-                      value={String(statsLimit)}
+                      value={String(ledgerLimit)}
                       onChange={(event) => {
-                        const nextLimit = Number(event.target.value) || 8;
-                        setStatsLimit(nextLimit);
-                        setStatsPage(1);
+                        const nextLimit = Number(event.target.value) || 12;
+                        setLedgerLimit(nextLimit);
+                        setLedgerPage(1);
                       }}
                     >
-                      <option value="5">5</option>
-                      <option value="8">8</option>
                       <option value="12">12</option>
-                      <option value="20">20</option>
+                      <option value="25">25</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
                     </Select>
                   </FormControl>
+                  <Box alignSelf={{ base: "stretch", xl: "end" }}>
+                    <AppButton
+                      w={{ base: "full", xl: "auto" }}
+                      onClick={() => void fetchIngredientDayLedger()}
+                    >
+                      Refresh Ledger
+                    </AppButton>
+                  </Box>
                 </SimpleGrid>
 
                 {stockInsightsLoading || !stockInsights ? (
                   <SkeletonTable />
                 ) : (
-                  <SimpleGrid columns={{ base: 1, sm: 2, xl: 5 }} spacing={3}>
+                  <SimpleGrid columns={{ base: 1, sm: 2, md: 3, xl: 5 }} spacing={3}>
                     <AppCard title="Total Ingredients">
                       <Text fontSize="3xl" fontWeight={900}>
                         {stockInsights.totals.totalIngredients}
@@ -739,27 +843,27 @@ export const IngredientEntryPage = () => {
                   </SimpleGrid>
                 )}
 
-                {statsLoading ? (
+                {ledgerLoading ? (
                   <SkeletonTable />
                 ) : (
                   <DataTable
-                    columns={statsColumns}
-                    rows={statsRows}
+                    columns={dayLedgerColumns}
+                    rows={ledgerRows}
                     emptyState={
                       <EmptyState
-                        title="No stock stats found"
-                        description="Try a different search or category filter."
+                        title="No ledger rows found"
+                        description="Try a different date range or ingredient search."
                       />
                     }
                   />
                 )}
 
                 <PaginationControls
-                  page={statsPagination.page}
-                  totalPages={statsPagination.totalPages}
-                  total={statsPagination.total}
-                  showing={statsRows.length}
-                  onPageChange={setStatsPage}
+                  page={ledgerPagination.page}
+                  totalPages={ledgerPagination.totalPages}
+                  total={ledgerPagination.total}
+                  showing={ledgerRows.length}
+                  onPageChange={setLedgerPage}
                 />
               </VStack>
             </AppCard>

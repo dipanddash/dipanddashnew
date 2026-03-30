@@ -88,7 +88,6 @@ const purchaseLineSchema = z
     quantity: z.coerce.number().positive("Quantity must be greater than zero"),
     quantityUnit: z.string().trim().optional(),
     unitPrice: z.coerce.number().min(0, "Unit price cannot be negative"),
-    updateUnitPrice: z.boolean().optional(),
     note: z.string().trim().max(255).optional()
   })
   .superRefine((value, ctx) => {

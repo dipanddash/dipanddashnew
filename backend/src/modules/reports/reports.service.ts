@@ -84,6 +84,16 @@ type TransferMovementRow = {
   transferredOut: number;
 };
 
+type ClosingStockSnapshotRow = {
+  date: string;
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  openingStock: number;
+  consumption: number;
+  remainingStock: number;
+};
+
 type OutletContext = {
   id: string;
   outletCode: string;
@@ -99,6 +109,8 @@ const toMoney = (value: unknown) => Number(toNumber(value).toFixed(2));
 const toQty = (value: unknown) => Number(toNumber(value).toFixed(3));
 const toPercent = (value: unknown) => Number(toNumber(value).toFixed(2));
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
 const startOfDay = (value: Date) => {
   const next = new Date(value);
   next.setHours(0, 0, 0, 0);
@@ -111,7 +123,52 @@ const endOfDay = (value: Date) => {
   return next;
 };
 
-const formatDate = (value: Date) => value.toISOString().slice(0, 10);
+const formatDate = (value: Date) => `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+
+const parseDateInput = (value: string) => {
+  const trimmed = value.trim();
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnlyMatch) {
+    const year = Number(dateOnlyMatch[1]);
+    const month = Number(dateOnlyMatch[2]);
+    const day = Number(dateOnlyMatch[3]);
+    const parsed = new Date(year, month - 1, day);
+    const isValid =
+      parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+    return isValid ? parsed : new Date(Number.NaN);
+  }
+  return new Date(trimmed);
+};
+
+const normalizeMovementDate = (value: unknown) => {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return "";
+    }
+    return formatDate(value);
+  }
+
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const exactDateMatch = /^(\d{4}-\d{2}-\d{2})$/.exec(text);
+  if (exactDateMatch) {
+    return exactDateMatch[1];
+  }
+
+  const leadingDateMatch = /^(\d{4}-\d{2}-\d{2})[T\s].*$/.exec(text);
+  if (leadingDateMatch) {
+    return leadingDateMatch[1];
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+  return formatDate(parsed);
+};
 
 const getDefaultRange = () => {
   const to = endOfDay(new Date());
@@ -122,8 +179,8 @@ const getDefaultRange = () => {
 
 const getDateRange = (dateFrom?: string, dateTo?: string) => {
   const defaults = getDefaultRange();
-  const from = dateFrom ? startOfDay(new Date(dateFrom)) : defaults.from;
-  const to = dateTo ? endOfDay(new Date(dateTo)) : defaults.to;
+  const from = dateFrom ? startOfDay(parseDateInput(dateFrom)) : defaults.from;
+  const to = dateTo ? endOfDay(parseDateInput(dateTo)) : defaults.to;
 
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     throw new AppError(422, "Date must be in YYYY-MM-DD format.");
@@ -277,7 +334,7 @@ export class ReportsService {
       generatedAt: new Date().toISOString(),
       columns: computed.payload.columns,
       rows: filteredRows,
-      stats: computed.payload.stats
+      stats: this.buildStockConsumptionStats(filteredRows)
     };
 
     const outletToken = computed.outletLabel
@@ -288,8 +345,8 @@ export class ReportsService {
 
     if (format === "excel") {
       return {
-        fileName: `stock_consumption_${outletToken}_${rangeToken}.xls`,
-        mimeType: "application/vnd.ms-excel",
+        fileName: `stock_consumption_${outletToken}_${rangeToken}.csv`,
+        mimeType: "text/csv; charset=utf-8",
         content: buildStockConsumptionExcelXml(exportPayload)
       };
     }
@@ -314,7 +371,7 @@ export class ReportsService {
       generatedAt: new Date().toISOString(),
       columns: computed.payload.columns,
       rows: filteredRows,
-      stats: computed.payload.stats
+      stats: this.buildStockConsumptionStats(filteredRows)
     });
 
     return {
@@ -1480,12 +1537,95 @@ export class ReportsService {
       }>();
 
     return rows.map((row) => ({
-      date: row.date,
+      date: normalizeMovementDate(row.date),
       ingredientId: row.ingredientId,
       ingredientName: row.ingredientName ?? "-",
       unit: row.unit ?? "",
       quantity: toQty(toNumber(row.quantity))
     }));
+  }
+
+  private async getClosingReportSnapshots(fromDate: string, toDate: string): Promise<ClosingStockSnapshotRow[]> {
+    if (fromDate > toDate) {
+      return [];
+    }
+
+    const rows = await AppDataSource.query(
+      `
+      SELECT
+        report."reportDate" AS "date",
+        NULLIF(item->>'ingredientId', '') AS "ingredientId",
+        COALESCE(NULLIF(item->>'ingredientName', ''), '-') AS "ingredientName",
+        LOWER(COALESCE(NULLIF(item->>'unit', ''), 'unit')) AS "unit",
+        SUM(COALESCE(NULLIF(item->>'allocatedQuantity', ''), '0')::numeric) AS "openingStock",
+        SUM(COALESCE(NULLIF(item->>'usedQuantity', ''), '0')::numeric) AS "consumption",
+        SUM(COALESCE(NULLIF(item->>'expectedRemainingQuantity', ''), '0')::numeric) AS "remainingStock"
+      FROM "staff_closing_reports" report
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(report."items") = 'array' THEN report."items"
+          ELSE '[]'::jsonb
+        END
+      ) item
+      WHERE report."reportDate" >= $1
+        AND report."reportDate" <= $2
+        AND NULLIF(item->>'ingredientId', '') IS NOT NULL
+      GROUP BY
+        report."reportDate",
+        NULLIF(item->>'ingredientId', ''),
+        COALESCE(NULLIF(item->>'ingredientName', ''), '-'),
+        LOWER(COALESCE(NULLIF(item->>'unit', ''), 'unit'))
+      `,
+      [fromDate, toDate]
+    );
+
+    return (rows as Array<Record<string, unknown>>)
+      .map((row) => ({
+        date: normalizeMovementDate(row.date),
+        ingredientId: String(row.ingredientId ?? ""),
+        ingredientName: String(row.ingredientName ?? "-"),
+        unit: String(row.unit ?? ""),
+        openingStock: toQty(toNumber(row.openingStock)),
+        consumption: toQty(toNumber(row.consumption)),
+        remainingStock: toQty(toNumber(row.remainingStock))
+      }))
+      .filter((row) => row.ingredientId.length > 0);
+  }
+
+  private async getPurchaseMovements(fromDate: string, toDate: string): Promise<StockMovementRow[]> {
+    if (fromDate > toDate) {
+      return [];
+    }
+
+    const rows = await AppDataSource.query(
+      `
+      SELECT
+        po."purchaseDate" AS "date",
+        line."ingredientId" AS "ingredientId",
+        COALESCE(MAX(ingredient."name"), MAX(line."itemNameSnapshot"), '-') AS "ingredientName",
+        LOWER(COALESCE(MAX(ingredient."unit"::text), MAX(line."unit"), 'unit')) AS "unit",
+        SUM(COALESCE(line."stockAdded", 0)) AS "quantity"
+      FROM "purchase_order_lines" line
+      INNER JOIN "purchase_orders" po ON po."id" = line."purchaseOrderId"
+      LEFT JOIN "ingredients" ingredient ON ingredient."id" = line."ingredientId"
+      WHERE line."lineType" = 'ingredient'
+        AND line."ingredientId" IS NOT NULL
+        AND po."purchaseDate" >= $1
+        AND po."purchaseDate" <= $2
+      GROUP BY po."purchaseDate", line."ingredientId"
+      `,
+      [fromDate, toDate]
+    );
+
+    return (rows as Array<Record<string, unknown>>)
+      .map((row) => ({
+        date: normalizeMovementDate(row.date),
+        ingredientId: String(row.ingredientId ?? ""),
+        ingredientName: String(row.ingredientName ?? "-"),
+        unit: String(row.unit ?? ""),
+        quantity: toQty(toNumber(row.quantity))
+      }))
+      .filter((row) => row.ingredientId.length > 0);
   }
 
   private async getDumpMovements(fromDate: string, toDate: string): Promise<StockMovementRow[]> {
@@ -1530,7 +1670,7 @@ export class ReportsService {
 
     return (rows as Array<Record<string, unknown>>)
       .map((row) => ({
-        date: String(row.date ?? ""),
+        date: normalizeMovementDate(row.date),
         ingredientId: String(row.ingredientId ?? ""),
         ingredientName: String(row.ingredientName ?? "-"),
         unit: String(row.unit ?? ""),
@@ -1597,13 +1737,94 @@ export class ReportsService {
     );
 
     return (rows as Array<Record<string, unknown>>).map((row) => ({
-      date: String(row.date ?? ""),
+      date: normalizeMovementDate(row.date),
       ingredientId: String(row.ingredientId ?? ""),
       ingredientName: String(row.ingredientName ?? "-"),
       unit: String(row.unit ?? ""),
       transferredIn: toQty(toNumber(row.transferredIn)),
       transferredOut: toQty(toNumber(row.transferredOut))
     }));
+  }
+
+  private buildStockConsumptionStats(rows: ReportRow[]): ReportStat[] {
+    const ingredientTotals = new Map<string, { consumption: number; dump: number; unit: string }>();
+    const dateTotals = new Map<string, number>();
+
+    rows.forEach((row) => {
+      const ingredient = String(row.ingredient ?? "-");
+      const unit = String(row.unit ?? "unit");
+      const consumption = toQty(toNumber(row.consumption));
+      const dump = toQty(toNumber(row.dump));
+      const totalStock = toQty(toNumber(row.totalStock));
+      const date = String(row.date ?? "");
+
+      const current = ingredientTotals.get(ingredient) ?? { consumption: 0, dump: 0, unit };
+      current.consumption = toQty(current.consumption + consumption);
+      current.dump = toQty(current.dump + dump);
+      current.unit = current.unit || unit;
+      ingredientTotals.set(ingredient, current);
+
+      if (date.length) {
+        dateTotals.set(date, toQty((dateTotals.get(date) ?? 0) + totalStock));
+      }
+    });
+
+    const entries = Array.from(ingredientTotals.entries()).map(([ingredient, totals]) => ({
+      ingredient,
+      ...totals
+    }));
+    const consumedEntries = entries.filter((entry) => entry.consumption > 0);
+    const dumpedEntries = entries.filter((entry) => entry.dump > 0);
+
+    const mostUsed = [...consumedEntries].sort((left, right) => {
+      if (right.consumption !== left.consumption) {
+        return right.consumption - left.consumption;
+      }
+      return left.ingredient.localeCompare(right.ingredient);
+    })[0];
+
+    const leastUsed = [...consumedEntries].sort((left, right) => {
+      if (left.consumption !== right.consumption) {
+        return left.consumption - right.consumption;
+      }
+      return left.ingredient.localeCompare(right.ingredient);
+    })[0];
+
+    const mostDumped = [...dumpedEntries].sort((left, right) => {
+      if (right.dump !== left.dump) {
+        return right.dump - left.dump;
+      }
+      return left.ingredient.localeCompare(right.ingredient);
+    })[0];
+
+    const finalDate = Array.from(dateTotals.keys()).sort()[dateTotals.size - 1] ?? null;
+    const closingStock = finalDate ? toQty(dateTotals.get(finalDate) ?? 0) : 0;
+    const totalConsumption = toQty(rows.reduce((sum, row) => sum + toNumber(row.consumption), 0));
+
+    return [
+      { label: "Total Ingredients", value: ingredientTotals.size },
+      {
+        label: "Most Used Ingredient",
+        value: mostUsed?.ingredient ?? "-",
+        hint: mostUsed ? `${toQty(mostUsed.consumption)} ${mostUsed.unit}` : "No usage data"
+      },
+      {
+        label: "Least Used Ingredient",
+        value: leastUsed?.ingredient ?? "-",
+        hint: leastUsed ? `${toQty(leastUsed.consumption)} ${leastUsed.unit}` : "No usage data"
+      },
+      {
+        label: "Most Dumped Ingredient",
+        value: mostDumped?.ingredient ?? "-",
+        hint: mostDumped ? `${toQty(mostDumped.dump)} ${mostDumped.unit}` : "No dump data"
+      },
+      { label: "Total Consumption", value: totalConsumption },
+      {
+        label: "Closing Stock",
+        value: closingStock,
+        hint: finalDate ? `As of ${finalDate}` : undefined
+      }
+    ];
   }
 
   private async buildStockConsumptionDataset(from: Date, to: Date, outletId?: string) {
@@ -1618,21 +1839,53 @@ export class ReportsService {
       this.ingredientStockRepository.find()
     ]);
 
-    const [usageRows, dumpRows, transferRows] = await Promise.all([
+    const [closingSnapshots, purchaseRows, usageRows, dumpRows, transferRows] = await Promise.all([
+      this.getClosingReportSnapshots(fromDate, toDate),
+      this.getPurchaseMovements(fromDate, movementEndDate),
       this.getUsageMovements(fromDate, movementEndDate),
       this.getDumpMovements(fromDate, movementEndDate),
       this.getTransferMovements(fromDate, movementEndDate, outletContext?.id ?? null)
     ]);
 
+    const closingUsageRows: StockMovementRow[] = closingSnapshots.map((snapshot) => ({
+      date: snapshot.date,
+      ingredientId: snapshot.ingredientId,
+      ingredientName: snapshot.ingredientName,
+      unit: snapshot.unit,
+      quantity: snapshot.consumption
+    }));
+
+    // Closing report usage is preferred for stock consumption rows; invoice usage fills missing keys.
+    const usageKeys = new Set<string>();
+    const usageRowsWithFallback: StockMovementRow[] = [];
+    usageRows.forEach((row) => {
+      usageKeys.add(this.movementKey(row.ingredientId, row.date));
+      usageRowsWithFallback.push(row);
+    });
+    closingUsageRows.forEach((row) => {
+      const key = this.movementKey(row.ingredientId, row.date);
+      if (!usageKeys.has(key)) {
+        usageKeys.add(key);
+        usageRowsWithFallback.push(row);
+      }
+    });
+
     const ingredientNameMap = new Map<string, string>(ingredients.map((ingredient) => [ingredient.id, ingredient.name]));
     const ingredientUnitMap = new Map<string, string>(ingredients.map((ingredient) => [ingredient.id, ingredient.unit]));
+    const ingredientMinStockMap = new Map<string, number>(
+      ingredients.map((ingredient) => [ingredient.id, toQty(toNumber(ingredient.minStock))])
+    );
     const stockMap = new Map(stocks.map((stock) => [stock.ingredientId, toQty(toNumber(stock.totalStock))]));
 
+    const closingOpeningByKey = new Map<string, number>();
+    const closingRemainingByKey = new Map<string, number>();
+    const purchaseRangeMap = new Map<string, number>();
     const consumedRangeMap = new Map<string, number>();
     const dumpRangeMap = new Map<string, number>();
     const transferInRangeMap = new Map<string, number>();
     const transferOutRangeMap = new Map<string, number>();
 
+    const purchaseFromStartMap = new Map<string, number>();
     const consumedFromStartMap = new Map<string, number>();
     const dumpFromStartMap = new Map<string, number>();
     const transferInFromStartMap = new Map<string, number>();
@@ -1644,7 +1897,18 @@ export class ReportsService {
       map.set(key, (map.get(key) ?? 0) + value);
     };
 
-    usageRows.forEach((row) => {
+    purchaseRows.forEach((row) => {
+      ingredientNameMap.set(row.ingredientId, ingredientNameMap.get(row.ingredientId) ?? row.ingredientName);
+      ingredientUnitMap.set(row.ingredientId, ingredientUnitMap.get(row.ingredientId) ?? row.unit);
+      addToMap(purchaseFromStartMap, row.ingredientId, row.quantity);
+      if (row.date <= toDate) {
+        const key = this.movementKey(row.ingredientId, row.date);
+        addToMap(purchaseRangeMap, key, row.quantity);
+        ingredientIdsInRange.add(row.ingredientId);
+      }
+    });
+
+    usageRowsWithFallback.forEach((row) => {
       ingredientNameMap.set(row.ingredientId, ingredientNameMap.get(row.ingredientId) ?? row.ingredientName);
       ingredientUnitMap.set(row.ingredientId, ingredientUnitMap.get(row.ingredientId) ?? row.unit);
       addToMap(consumedFromStartMap, row.ingredientId, row.quantity);
@@ -1679,6 +1943,16 @@ export class ReportsService {
       }
     });
 
+    closingSnapshots.forEach((snapshot) => {
+      ingredientNameMap.set(snapshot.ingredientId, ingredientNameMap.get(snapshot.ingredientId) ?? snapshot.ingredientName);
+      ingredientUnitMap.set(snapshot.ingredientId, ingredientUnitMap.get(snapshot.ingredientId) ?? snapshot.unit);
+      const key = this.movementKey(snapshot.ingredientId, snapshot.date);
+      closingOpeningByKey.set(key, snapshot.openingStock);
+      closingRemainingByKey.set(key, snapshot.remainingStock);
+      consumedRangeMap.set(key, snapshot.consumption);
+      ingredientIdsInRange.add(snapshot.ingredientId);
+    });
+
     const dateSeries = this.buildDateSeries(fromDate, toDate);
     const ingredientIds = Array.from(ingredientIdsInRange).sort((left, right) => {
       const leftName = ingredientNameMap.get(left) ?? left;
@@ -1688,77 +1962,116 @@ export class ReportsService {
 
     const rows: ReportRow[] = [];
 
-    ingredientIds.forEach((ingredientId) => {
-      const currentStock = stockMap.get(ingredientId) ?? 0;
-      const outgoingSinceStart =
-        (consumedFromStartMap.get(ingredientId) ?? 0) +
-        (dumpFromStartMap.get(ingredientId) ?? 0) +
-        (transferOutFromStartMap.get(ingredientId) ?? 0);
-      const incomingSinceStart = transferInFromStartMap.get(ingredientId) ?? 0;
-      let openingStock = toQty(currentStock + outgoingSinceStart - incomingSinceStart);
-      const ingredientName = ingredientNameMap.get(ingredientId) ?? "-";
-      const unit = ingredientUnitMap.get(ingredientId) ?? "-";
+    if (closingSnapshots.length > 0) {
+      closingSnapshots
+        .slice()
+        .sort((left, right) => {
+          const dateCompare = left.date.localeCompare(right.date);
+          if (dateCompare !== 0) {
+            return dateCompare;
+          }
+          return left.ingredientName.localeCompare(right.ingredientName);
+        })
+        .forEach((snapshot) => {
+          const key = this.movementKey(snapshot.ingredientId, snapshot.date);
+          const consumption = toQty(consumedRangeMap.get(key) ?? snapshot.consumption);
+          const dump = toQty(dumpRangeMap.get(key) ?? 0);
+          const transferredIn = toQty(transferInRangeMap.get(key) ?? 0);
+          const transferredOut = toQty(transferOutRangeMap.get(key) ?? 0);
+          const openingStock = toQty(closingOpeningByKey.get(key) ?? snapshot.openingStock);
+          const purchaseFromMovements = toQty(purchaseRangeMap.get(key) ?? 0);
+          const purchaseFromClosing = toQty(
+            snapshot.remainingStock - openingStock - transferredIn + transferredOut + consumption + dump
+          );
+          const purchase =
+            Math.abs(purchaseFromMovements - purchaseFromClosing) > 0.001
+              ? toQty(Math.max(0, purchaseFromClosing))
+              : purchaseFromMovements;
+          const totalStock = toQty(
+            closingRemainingByKey.get(key) ?? (openingStock + purchase + transferredIn - transferredOut - consumption - dump)
+          );
+          const minStock = ingredientMinStockMap.get(snapshot.ingredientId) ?? 0;
+          const stockHealth = totalStock <= minStock ? "LOW_STOCK" : "HEALTHY";
 
-      dateSeries.forEach((date) => {
-        const key = this.movementKey(ingredientId, date);
-        const consumption = toQty(consumedRangeMap.get(key) ?? 0);
-        const dump = toQty(dumpRangeMap.get(key) ?? 0);
-        const transferredIn = toQty(transferInRangeMap.get(key) ?? 0);
-        const transferredOut = toQty(transferOutRangeMap.get(key) ?? 0);
-        const totalStock = toQty(openingStock + transferredIn - transferredOut - consumption - dump);
-
-        rows.push({
-          date,
-          ingredient: ingredientName,
-          unit,
-          openingStock: toQty(openingStock),
-          dump,
-          consumption,
-          transferredIn,
-          transferredOut,
-          totalStock
+          rows.push({
+            date: snapshot.date,
+            ingredient: ingredientNameMap.get(snapshot.ingredientId) ?? snapshot.ingredientName,
+            unit: ingredientUnitMap.get(snapshot.ingredientId) ?? snapshot.unit,
+            openingStock,
+            purchase,
+            dump,
+            consumption,
+            transferredIn,
+            transferredOut,
+            totalStock,
+            stockHealth
+          });
         });
+    } else {
+      ingredientIds.forEach((ingredientId) => {
+        const currentStock = stockMap.get(ingredientId) ?? 0;
+        const outgoingSinceStart =
+          (consumedFromStartMap.get(ingredientId) ?? 0) +
+          (dumpFromStartMap.get(ingredientId) ?? 0) +
+          (transferOutFromStartMap.get(ingredientId) ?? 0);
+        const incomingSinceStart =
+          (transferInFromStartMap.get(ingredientId) ?? 0) + (purchaseFromStartMap.get(ingredientId) ?? 0);
+        let openingStock = toQty(currentStock + outgoingSinceStart - incomingSinceStart);
+        const ingredientName = ingredientNameMap.get(ingredientId) ?? "-";
+        const unit = ingredientUnitMap.get(ingredientId) ?? "-";
+        const minStock = ingredientMinStockMap.get(ingredientId) ?? 0;
 
-        openingStock = totalStock;
+        dateSeries.forEach((date) => {
+          const key = this.movementKey(ingredientId, date);
+          const purchase = toQty(purchaseRangeMap.get(key) ?? 0);
+          const consumption = toQty(consumedRangeMap.get(key) ?? 0);
+          const dump = toQty(dumpRangeMap.get(key) ?? 0);
+          const transferredIn = toQty(transferInRangeMap.get(key) ?? 0);
+          const transferredOut = toQty(transferOutRangeMap.get(key) ?? 0);
+          const totalStock = toQty(openingStock + purchase + transferredIn - transferredOut - consumption - dump);
+          const stockHealth = totalStock <= minStock ? "LOW_STOCK" : "HEALTHY";
+
+          rows.push({
+            date,
+            ingredient: ingredientName,
+            unit,
+            openingStock: toQty(openingStock),
+            purchase,
+            dump,
+            consumption,
+            transferredIn,
+            transferredOut,
+            totalStock,
+            stockHealth
+          });
+
+          openingStock = totalStock;
+        });
       });
+    }
+
+    rows.sort((left, right) => {
+      const dateComparison = String(left.date ?? "").localeCompare(String(right.date ?? ""));
+      if (dateComparison !== 0) {
+        return dateComparison;
+      }
+      return String(left.ingredient ?? "").localeCompare(String(right.ingredient ?? ""));
     });
 
-    const finalDate = dateSeries[dateSeries.length - 1];
-    const totalConsumption = toQty(rows.reduce((sum, row) => sum + toNumber(row.consumption), 0));
-    const totalDump = toQty(rows.reduce((sum, row) => sum + toNumber(row.dump), 0));
-    const totalTransferredIn = toQty(rows.reduce((sum, row) => sum + toNumber(row.transferredIn), 0));
-    const totalTransferredOut = toQty(rows.reduce((sum, row) => sum + toNumber(row.transferredOut), 0));
-    const closingStock = finalDate
-      ? toQty(
-          rows
-            .filter((row) => row.date === finalDate)
-            .reduce((sum, row) => sum + toNumber(row.totalStock), 0)
-        )
-      : 0;
-
     const payload: ReportPayload = {
-      stats: [
-        { label: "Ingredients", value: ingredientIds.length },
-        { label: "Total Consumption", value: totalConsumption },
-        { label: "Total Dump", value: totalDump },
-        { label: "Transferred In", value: totalTransferredIn },
-        { label: "Transferred Out", value: totalTransferredOut },
-        {
-          label: "Closing Stock",
-          value: closingStock,
-          hint: finalDate ? `As of ${finalDate}` : undefined
-        }
-      ],
+      stats: this.buildStockConsumptionStats(rows),
       columns: [
         { key: "date", label: "Date" },
         { key: "ingredient", label: "Ingredient" },
         { key: "unit", label: "Unit" },
         { key: "openingStock", label: "Opening Stock" },
+        { key: "purchase", label: "Purchase" },
         { key: "dump", label: "Dump" },
         { key: "consumption", label: "Consumption" },
         { key: "transferredIn", label: "Transferred In" },
         { key: "transferredOut", label: "Transferred Out" },
-        { key: "totalStock", label: "Total Stock" }
+        { key: "totalStock", label: "Remaining Stock" },
+        { key: "stockHealth", label: "Stock Health" }
       ],
       rows
     };

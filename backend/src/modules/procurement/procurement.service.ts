@@ -23,6 +23,7 @@ import {
   getCompatibleIngredientUnits,
   getCompatibleProductUnits
 } from "./procurement.units";
+import { getLatestIngredientPurchasePriceMap } from "./ingredient-costing";
 
 type PaginationFilters = {
   page: number;
@@ -93,7 +94,6 @@ type PurchaseOrderLinePayload = {
   quantity: number;
   quantityUnit?: string;
   unitPrice: number;
-  updateUnitPrice?: boolean;
   note?: string;
 };
 
@@ -713,18 +713,6 @@ export class ProcurementService {
         stock.lastUpdatedAt = new Date();
         await manager.save(IngredientStock, stock);
 
-        if (line.updateUnitPrice) {
-          const oneUnitToBase = convertPurchaseQuantityToBase("ingredient", 1, enteredUnit, ingredient.unit);
-          if (oneUnitToBase === null || oneUnitToBase <= 0) {
-            throw new AppError(
-              422,
-              `Cannot convert unit price from ${enteredUnit} to ${ingredient.unit}.`
-            );
-          }
-          ingredient.perUnitPrice = toFixedPrice(unitPrice / oneUnitToBase);
-          await manager.save(Ingredient, ingredient);
-        }
-
         const stockLog = manager.create(IngredientStockLog, {
           ingredientId: ingredient.id,
           type: IngredientStockLogType.ADD,
@@ -747,7 +735,7 @@ export class ProcurementService {
           stockAfter,
           unitPrice,
           lineTotal,
-          unitPriceUpdated: Boolean(line.updateUnitPrice)
+          unitPriceUpdated: false
         });
         lineEntities.push(lineEntity);
         totalAmount += lineTotal;
@@ -777,13 +765,6 @@ export class ProcurementService {
       const stockAfter = toFixedQuantity(stockBefore + stockAdded);
       product.currentStock = stockAfter;
 
-      if (line.updateUnitPrice) {
-        const oneUnitToBase = convertPurchaseQuantityToBase("product", 1, enteredUnit, product.unit);
-        if (oneUnitToBase === null || oneUnitToBase <= 0) {
-          throw new AppError(422, `Cannot convert unit price from ${enteredUnit} to ${product.unit}.`);
-        }
-        product.purchaseUnitPrice = toFixedPrice(unitPrice / oneUnitToBase);
-      }
       await manager.save(Product, product);
 
       const lineEntity = manager.create(PurchaseOrderLine, {
@@ -800,7 +781,7 @@ export class ProcurementService {
         stockAfter,
         unitPrice,
         lineTotal,
-        unitPriceUpdated: Boolean(line.updateUnitPrice)
+        unitPriceUpdated: false
       });
       lineEntities.push(lineEntity);
       totalAmount += lineTotal;
@@ -1237,6 +1218,13 @@ export class ProcurementService {
 
     const stockMap = new Map(stockRows.map((stock) => [stock.ingredientId, toNumber(stock.totalStock)]));
     const allocationMap = new Map(allocationRows.map((allocation) => [allocation.ingredientId, allocation]));
+    const fallbackIngredientPriceMap = new Map(
+      ingredients.map((ingredient) => [ingredient.id, toNumber(ingredient.perUnitPrice)])
+    );
+    const latestIngredientPriceMap = await getLatestIngredientPurchasePriceMap(
+      ingredientIds,
+      fallbackIngredientPriceMap
+    );
 
     return {
       date,
@@ -1266,7 +1254,9 @@ export class ProcurementService {
           categoryName: ingredient.category?.name ?? "-",
           unit: ingredient.unit,
           unitOptions: getCompatibleIngredientUnits(ingredient.unit),
-          perUnitPrice: toFixedPrice(toNumber(ingredient.perUnitPrice)),
+          perUnitPrice: toFixedPrice(
+            latestIngredientPriceMap.get(ingredient.id) ?? toNumber(ingredient.perUnitPrice)
+          ),
           currentStock,
           minStock: toFixedQuantity(toNumber(ingredient.minStock)),
           allocatedToday,

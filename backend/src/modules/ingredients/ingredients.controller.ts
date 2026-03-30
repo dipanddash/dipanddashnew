@@ -127,6 +127,7 @@ export class IngredientsController {
       search: typeof req.query.search === "string" ? req.query.search : undefined,
       categoryId: typeof req.query.categoryId === "string" ? req.query.categoryId : undefined,
       includeInactive: parseBoolean(req.query.includeInactive, true),
+      withMovementStats: parseBoolean(req.query.withMovementStats, false),
       page: parsePositiveInt(req.query.page, 1),
       limit: parsePositiveInt(req.query.limit, 10)
     });

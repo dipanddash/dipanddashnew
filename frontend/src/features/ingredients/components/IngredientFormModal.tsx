@@ -29,18 +29,14 @@ const schema = z.object({
   name: z.string().trim().min(2, "Ingredient name must be at least 2 characters").max(120),
   categoryId: z.string().uuid("Please select a valid category"),
   unit: z.string().min(1, "Unit is required"),
-  perUnitPrice: z.coerce.number().min(0, "Per unit price cannot be negative"),
-  minStock: z.coerce.number().min(0, "Minimum stock cannot be negative"),
-  currentStock: z.coerce.number().min(0, "Current stock cannot be negative")
+  minStock: z.coerce.number().min(0, "Minimum stock cannot be negative")
 });
 
 type IngredientFormValues = {
   name: string;
   categoryId: string;
   unit: IngredientUnit;
-  perUnitPrice: number;
   minStock: number;
-  currentStock: number;
 };
 
 type IngredientFormModalProps = {
@@ -50,9 +46,7 @@ type IngredientFormModalProps = {
     name: string;
     categoryId: string;
     unit: IngredientUnit;
-    perUnitPrice: number;
     minStock: number;
-    currentStock?: number;
   }) => Promise<void>;
   loading?: boolean;
   categories: IngredientCategory[];
@@ -81,9 +75,7 @@ export const IngredientFormModal = ({
       name: "",
       categoryId: "",
       unit: "g",
-      perUnitPrice: 0,
-      minStock: 0,
-      currentStock: 0
+      minStock: 0
     }
   });
 
@@ -97,9 +89,7 @@ export const IngredientFormModal = ({
         name: "",
         categoryId: categories[0]?.id ?? "",
         unit: "g",
-        perUnitPrice: 0,
-        minStock: 0,
-        currentStock: 0
+        minStock: 0
       });
       return;
     }
@@ -108,9 +98,7 @@ export const IngredientFormModal = ({
       name: initialData.name,
       categoryId: initialData.categoryId,
       unit: initialData.unit,
-      perUnitPrice: initialData.perUnitPrice,
-      minStock: initialData.minStock,
-      currentStock: initialData.totalStock
+      minStock: initialData.minStock
     });
   }, [categories, initialData, isOpen, reset]);
 
@@ -181,28 +169,12 @@ export const IngredientFormModal = ({
               )}
             />
             <AppInput
-              label="Per Unit Price"
-              type="number"
-              step="0.01"
-              min={0}
-              error={errors.perUnitPrice?.message}
-              {...register("perUnitPrice")}
-            />
-            <AppInput
               label="Minimum Stock"
               type="number"
               step="0.001"
               min={0}
               error={errors.minStock?.message}
               {...register("minStock")}
-            />
-            <AppInput
-              label="Current Stock"
-              type="number"
-              step="0.001"
-              min={0}
-              error={errors.currentStock?.message}
-              {...register("currentStock")}
             />
           </VStack>
         </ModalBody>

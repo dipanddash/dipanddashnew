@@ -4,6 +4,7 @@ import { CashAudit } from "../cash-audit/cash-audit.entity";
 import { Invoice } from "../invoices/invoice.entity";
 import { InvoiceLine } from "../invoices/invoice-line.entity";
 import { InvoicePayment } from "../invoices/invoice-payment.entity";
+import { PurchaseOrder } from "../procurement/purchase-order.entity";
 
 type SalesStatsInput = {
   dateFrom?: string;
@@ -45,6 +46,7 @@ export class DashboardService {
   private readonly invoiceLineRepository = AppDataSource.getRepository(InvoiceLine);
   private readonly invoicePaymentRepository = AppDataSource.getRepository(InvoicePayment);
   private readonly cashAuditRepository = AppDataSource.getRepository(CashAudit);
+  private readonly purchaseOrderRepository = AppDataSource.getRepository(PurchaseOrder);
 
   private async getDipAndDashExcessAmount(from: Date, to: Date) {
     try {
@@ -148,6 +150,10 @@ export class DashboardService {
     const previousTo = new Date(safeFrom.getTime() - 1);
     const previousFrom = new Date(previousTo);
     previousFrom.setDate(previousFrom.getDate() - (rangeDays - 1));
+    const safeFromDay = toDay(safeFrom);
+    const safeToDay = toDay(safeTo);
+    const previousFromDay = toDay(previousFrom);
+    const previousToDay = toDay(previousTo);
 
     const paidInvoiceBase = this.invoiceRepository
       .createQueryBuilder("invoice")
@@ -166,6 +172,8 @@ export class DashboardService {
     const [
       summary,
       previousSummary,
+      purchaseSummary,
+      previousPurchaseSummary,
       paymentRows,
       paymentFallbackRows,
       orderTypeRows,
@@ -199,6 +207,18 @@ export class DashboardService {
           .clone()
           .select("COALESCE(SUM(invoice.totalAmount), 0)", "totalSales")
           .getRawOne<{ totalSales: string }>(),
+        this.purchaseOrderRepository
+          .createQueryBuilder("purchaseOrder")
+          .select("COALESCE(SUM(purchaseOrder.totalAmount), 0)", "totalPurchaseAmount")
+          .where("purchaseOrder.purchaseDate >= :fromDay", { fromDay: safeFromDay })
+          .andWhere("purchaseOrder.purchaseDate <= :toDay", { toDay: safeToDay })
+          .getRawOne<{ totalPurchaseAmount: string }>(),
+        this.purchaseOrderRepository
+          .createQueryBuilder("purchaseOrder")
+          .select("COALESCE(SUM(purchaseOrder.totalAmount), 0)", "totalPurchaseAmount")
+          .where("purchaseOrder.purchaseDate >= :fromDay", { fromDay: previousFromDay })
+          .andWhere("purchaseOrder.purchaseDate <= :toDay", { toDay: previousToDay })
+          .getRawOne<{ totalPurchaseAmount: string }>(),
         this.invoicePaymentRepository
           .createQueryBuilder("payment")
           .innerJoin(Invoice, "invoice", "invoice.id = payment.invoiceId")
@@ -297,8 +317,16 @@ export class DashboardService {
     const totalSales = toMoney(billedSales + excessAmount);
     const previousBilledSales = toMoney(previousSummary?.totalSales ?? 0);
     const previousSales = toMoney(previousBilledSales + previousExcessAmount);
+    const totalPurchaseAmount = toMoney(purchaseSummary?.totalPurchaseAmount ?? 0);
+    const previousPurchaseAmount = toMoney(previousPurchaseSummary?.totalPurchaseAmount ?? 0);
+    const netRevenue = toMoney(totalSales - totalPurchaseAmount);
+    const previousNetRevenue = toMoney(previousSales - previousPurchaseAmount);
     const salesGrowthPercentage =
       previousSales > 0 ? Number((((totalSales - previousSales) / previousSales) * 100).toFixed(2)) : null;
+    const netRevenueGrowthPercentage =
+      previousNetRevenue !== 0
+        ? Number((((netRevenue - previousNetRevenue) / Math.abs(previousNetRevenue)) * 100).toFixed(2))
+        : null;
 
     const paymentMap = new Map<string, { paymentMode: string; count: number; amount: number }>();
     [...paymentRows, ...paymentFallbackRows].forEach((row) => {
@@ -343,15 +371,19 @@ export class DashboardService {
       },
       cards: {
         totalSales,
+        netRevenue,
         billedSales,
         excessAmount,
+        totalPurchaseAmount,
         totalOrders: Number(summary?.totalOrders ?? 0),
         averageOrderValue: toMoney(summary?.avgOrderValue ?? 0),
         totalDiscount: toMoney(summary?.discountAmount ?? 0),
         totalTax: toMoney(summary?.taxAmount ?? 0),
         uniqueCustomers: Number(summary?.uniqueCustomers ?? 0),
         previousPeriodSales: previousSales,
+        previousPeriodNetRevenue: previousNetRevenue,
         salesGrowthPercentage,
+        netRevenueGrowthPercentage,
         cashSales: adjustedCashSales,
         cardSales: toMoney(cardSales),
         upiSales: toMoney(upiSales),

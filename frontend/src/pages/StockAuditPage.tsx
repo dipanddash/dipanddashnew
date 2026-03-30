@@ -200,6 +200,18 @@ export const StockAuditPage = () => {
           formatQuantityWithUnit(row.purchaseStockQuantity ?? 0, row.unit)
       },
       {
+        key: "transferredInQuantity",
+        header: "Transferred In",
+        render: (row: StockAuditData["items"]["rows"][number]) =>
+          formatQuantityWithUnit(row.transferredInQuantity ?? 0, row.unit)
+      },
+      {
+        key: "transferredOutQuantity",
+        header: "Transferred Out",
+        render: (row: StockAuditData["items"]["rows"][number]) =>
+          formatQuantityWithUnit(row.transferredOutQuantity ?? 0, row.unit)
+      },
+      {
         key: "consumptionQuantity",
         header: "Consumption",
         render: (row: StockAuditData["items"]["rows"][number]) =>

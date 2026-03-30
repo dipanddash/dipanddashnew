@@ -303,12 +303,12 @@ export const AdminDashboardPage = () => {
         <>
           <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={4}>
             <InsightCard
-              label="Total Sales"
-              value={formatCurrency(salesStats.cards.totalSales)}
+              label="Dip & Dash Net Revenue"
+              value={formatCurrency(salesStats.cards.netRevenue)}
               helper={
-                salesStats.cards.salesGrowthPercentage === null
-                  ? "No previous period data"
-                  : `${salesStats.cards.salesGrowthPercentage >= 0 ? "+" : ""}${salesStats.cards.salesGrowthPercentage}% vs previous`
+                salesStats.cards.netRevenueGrowthPercentage === null
+                  ? `Gross ${formatCurrency(salesStats.cards.totalSales)} - Purchase ${formatCurrency(salesStats.cards.totalPurchaseAmount)}`
+                  : `${salesStats.cards.netRevenueGrowthPercentage >= 0 ? "+" : ""}${salesStats.cards.netRevenueGrowthPercentage}% vs previous | Gross ${formatCurrency(salesStats.cards.totalSales)} - Purchase ${formatCurrency(salesStats.cards.totalPurchaseAmount)}`
               }
             />
             <InsightCard

@@ -58,6 +58,7 @@ export const ingredientListSchema = z.object({
     search: z.string().trim().optional(),
     categoryId: z.string().uuid("Invalid category id").optional(),
     includeInactive: z.coerce.boolean().optional(),
+    withMovementStats: z.coerce.boolean().optional(),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(50).default(10)
   })
@@ -68,9 +69,9 @@ export const createIngredientSchema = z.object({
     name: z.string().trim().min(2, "Ingredient name must be at least 2 characters").max(120),
     categoryId: z.string().uuid("Invalid category id"),
     unit: unitSchema,
-    perUnitPrice: z.coerce.number().min(0, "Per unit price cannot be negative"),
+    perUnitPrice: z.coerce.number().min(0, "Per unit price cannot be negative").optional().default(0),
     minStock: z.coerce.number().min(0, "Minimum stock cannot be negative"),
-    currentStock: z.coerce.number().min(0, "Current stock cannot be negative").default(0)
+    currentStock: z.coerce.number().min(0, "Current stock cannot be negative").optional().default(0)
   })
 });
 

@@ -246,7 +246,6 @@ export type CreatePurchaseLineInput = {
   quantity: number;
   quantityUnit?: string;
   unitPrice: number;
-  updateUnitPrice?: boolean;
   note?: string;
 };
 

@@ -1,14 +1,18 @@
 export type SalesStatsCards = {
   totalSales: number;
+  netRevenue: number;
   billedSales: number;
   excessAmount: number;
+  totalPurchaseAmount: number;
   totalOrders: number;
   averageOrderValue: number;
   totalDiscount: number;
   totalTax: number;
   uniqueCustomers: number;
   previousPeriodSales: number;
+  previousPeriodNetRevenue: number;
   salesGrowthPercentage: number | null;
+  netRevenueGrowthPercentage: number | null;
   cashSales: number;
   cardSales: number;
   upiSales: number;

@@ -61,6 +61,8 @@ export type IngredientListItem = {
   perUnitPrice: number;
   minStock: number;
   totalStock: number;
+  staffUsedQuantity?: number;
+  dumpQuantity?: number;
   isActive: boolean;
   status: IngredientStockStatus;
   createdAt: string;
@@ -201,6 +203,8 @@ export type StockAuditItemRow = {
   unit: string;
   openingStockQuantity?: number;
   purchaseStockQuantity?: number;
+  transferredInQuantity?: number;
+  transferredOutQuantity?: number;
   consumptionQuantity?: number;
   dumpQuantity?: number;
   expectedStockQuantity?: number;
@@ -223,6 +227,8 @@ export type StockAuditData = {
     mismatchedIngredients: number;
     matchedIngredients: number;
     totalPurchaseStock?: number;
+    totalTransferInStock?: number;
+    totalTransferOutStock?: number;
     totalConsumptionStock?: number;
     totalDumpStock?: number;
     totalUnallocatedStock?: number;

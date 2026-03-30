@@ -164,7 +164,7 @@ export const AddOnFormModal = ({
       return {
         compatible: true,
         cost,
-        helper: `${quantity} ${row.unit} = ${converted} ${ingredient.unit}`,
+        helper: `${quantity} ${row.unit} = ${converted} ${ingredient.unit} | Last purchase ${formatCurrency(ingredient.perUnitPrice)} / ${ingredient.unit.toUpperCase()}`,
         baseUnit: ingredient.unit
       };
     });

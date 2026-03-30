@@ -102,7 +102,6 @@ type DraftPurchaseLine = {
   quantity: string;
   quantityUnit: string;
   unitPrice: string;
-  updateUnitPrice: boolean;
   note: string;
 };
 
@@ -115,7 +114,6 @@ const createEmptyLine = (): DraftPurchaseLine => ({
   quantity: "1",
   quantityUnit: "",
   unitPrice: "0",
-  updateUnitPrice: false,
   note: ""
 });
 
@@ -179,7 +177,6 @@ const PurchaseOrderModal = ({
             quantity: String(line.enteredQuantity ?? line.stockAdded),
             quantityUnit: line.enteredUnit ?? line.unit,
             unitPrice: String(line.unitPrice),
-            updateUnitPrice: line.unitPriceUpdated,
             note: ""
           };
         })
@@ -333,7 +330,6 @@ const PurchaseOrderModal = ({
           quantity,
           quantityUnit: line.quantityUnit || undefined,
           unitPrice,
-          updateUnitPrice: line.updateUnitPrice,
           note: line.note.trim() || undefined
         } as CreatePurchaseLineInput;
       })
@@ -409,10 +405,23 @@ const PurchaseOrderModal = ({
                   line.lineType === "ingredient"
                     ? selectedIngredient?.unitOptions ?? []
                     : selectedProduct?.unitOptions ?? [];
+                const quantityNumber = Number(line.quantity);
+                const unitPriceNumber = Number(line.unitPrice);
+                const lineTotal =
+                  Number.isFinite(quantityNumber) && Number.isFinite(unitPriceNumber) && quantityNumber > 0 && unitPriceNumber >= 0
+                    ? quantityNumber * unitPriceNumber
+                    : 0;
 
                 return (
-                  <AppCard key={line.id} p={4}>
-                    <SimpleGrid columns={{ base: 1, lg: 7 }} spacing={3}>
+                  <AppCard
+                    key={line.id}
+                    p={{ base: 3, md: 4 }}
+                    border="1px solid"
+                    borderColor="rgba(133, 78, 48, 0.2)"
+                    bg="linear-gradient(160deg, #FFFFFF 0%, #FFF8EF 100%)"
+                  >
+                    <VStack spacing={3} align="stretch">
+                      <SimpleGrid columns={{ base: 1, md: 2, xl: 4 }} spacing={3}>
                       <AppSearchableSelect
                         label={`Line ${index + 1} Type`}
                         value={line.lineType}
@@ -448,59 +457,85 @@ const PurchaseOrderModal = ({
                           />
                         </>
                       ) : (
-                        <AppSearchableSelect
-                          label="Product"
-                          value={line.productId}
-                          options={productOptions}
-                          onValueChange={(value) => handleProductPick(line, value)}
-                          placeholder="Select product"
-                          searchPlaceholder="Search product"
-                        />
+                        <>
+                          <AppSearchableSelect
+                            label="Product"
+                            value={line.productId}
+                            options={productOptions}
+                            onValueChange={(value) => handleProductPick(line, value)}
+                            placeholder="Select product"
+                            searchPlaceholder="Search product"
+                          />
+                          <Box
+                            border="1px solid"
+                            borderColor="rgba(133, 78, 48, 0.2)"
+                            borderRadius="12px"
+                            p={3}
+                            bg="white"
+                          >
+                            <Text fontSize="sm" color="#6F594F" fontWeight={600}>
+                              Purchase Hint
+                            </Text>
+                            <Text mt={1} fontSize="xs" color="#7A6359">
+                              Product price can vary per order. This line price applies only to this stock entry.
+                            </Text>
+                          </Box>
+                        </>
                       )}
                       <AppInput
                         label="Quantity"
                         type="number"
                         min={0}
                         step="0.001"
-                        value={line.quantity}
-                        onChange={(event) => updateLine(line.id, { quantity: (event.target as HTMLInputElement).value })}
+                          value={line.quantity}
+                          onChange={(event) => updateLine(line.id, { quantity: (event.target as HTMLInputElement).value })}
                       />
-                      <FormControl>
-                        <FormLabel>Unit</FormLabel>
-                        <Select
-                          value={line.quantityUnit}
-                          onChange={(event) =>
-                            updateLine(line.id, { quantityUnit: (event.target as HTMLSelectElement).value })
-                          }
-                          bg="white"
-                          borderColor="rgba(193, 14, 14, 0.18)"
-                          focusBorderColor="brand.400"
-                        >
-                          <option value="">Select unit</option>
-                          {lineUnitOptions.map((unit) => (
-                            <option key={unit} value={unit}>
-                              {unit}
-                            </option>
-                          ))}
-                        </Select>
-                      </FormControl>
-                      <AppInput
-                        label="Unit Price"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={line.unitPrice}
-                        onChange={(event) => updateLine(line.id, { unitPrice: (event.target as HTMLInputElement).value })}
-                      />
-                      <FormControl>
-                        <FormLabel>Actions</FormLabel>
-                        <HStack>
-                          <Checkbox
-                            isChecked={line.updateUnitPrice}
-                            onChange={(event) => updateLine(line.id, { updateUnitPrice: event.target.checked })}
+                    </SimpleGrid>
+
+                      <SimpleGrid columns={{ base: 1, md: 2, xl: 4 }} spacing={3}>
+                        <FormControl>
+                          <FormLabel>Unit</FormLabel>
+                          <Select
+                            value={line.quantityUnit}
+                            onChange={(event) =>
+                              updateLine(line.id, { quantityUnit: (event.target as HTMLSelectElement).value })
+                            }
+                            bg="white"
+                            borderColor="rgba(193, 14, 14, 0.18)"
+                            focusBorderColor="brand.400"
                           >
-                            Update price
-                          </Checkbox>
+                            <option value="">Select unit</option>
+                            {lineUnitOptions.map((unit) => (
+                              <option key={unit} value={unit}>
+                                {unit}
+                              </option>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <AppInput
+                          label="Unit Price"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={line.unitPrice}
+                          onChange={(event) => updateLine(line.id, { unitPrice: (event.target as HTMLInputElement).value })}
+                        />
+                        <Box
+                          border="1px solid"
+                          borderColor="rgba(133, 78, 48, 0.2)"
+                          borderRadius="12px"
+                          p={3}
+                          bg="white"
+                        >
+                          <Text fontSize="sm" color="#6F594F" fontWeight={600}>
+                            Line Total
+                          </Text>
+                          <Text mt={1} fontSize="xl" fontWeight={900} color="#2A1A14">
+                            {formatCurrency(lineTotal)}
+                          </Text>
+                        </Box>
+                        <FormControl>
+                          <FormLabel>Actions</FormLabel>
                           <ActionIconButton
                             aria-label="Remove line"
                             tooltip="Remove line"
@@ -510,15 +545,22 @@ const PurchaseOrderModal = ({
                             onClick={() => removeLine(line.id)}
                             isDisabled={lines.length <= 1}
                           />
-                        </HStack>
-                      </FormControl>
-                    </SimpleGrid>
-                    <Box mt={2}>
+                        </FormControl>
+                      </SimpleGrid>
+                    <Box
+                      mt={1}
+                      p={3}
+                      borderRadius="12px"
+                      bg="rgba(255, 255, 255, 0.7)"
+                      border="1px dashed"
+                      borderColor="rgba(133, 78, 48, 0.2)"
+                    >
                       {line.lineType === "ingredient" && selectedIngredient ? (
                         <Text fontSize="sm" color="#725A50">
                           Stock: {selectedIngredient.currentStock} {selectedIngredient.unit} | Allocated:{" "}
                           {selectedIngredient.allocatedToday} | Used: {selectedIngredient.usedToday} | Pending:{" "}
-                          {selectedIngredient.pendingToday} | Base Unit: {selectedIngredient.unit}
+                          {selectedIngredient.pendingToday} | Last Purchase Price:{" "}
+                          {formatCurrency(selectedIngredient.perUnitPrice)} / {selectedIngredient.unit.toUpperCase()}
                         </Text>
                       ) : null}
                       {line.lineType === "product" && selectedProduct ? (
@@ -528,6 +570,7 @@ const PurchaseOrderModal = ({
                         </Text>
                       ) : null}
                     </Box>
+                    </VStack>
                   </AppCard>
                 );
               })}
